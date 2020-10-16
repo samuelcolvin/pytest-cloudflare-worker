@@ -1,11 +1,10 @@
-import asyncio
 from pathlib import Path
 
 from pytest_cloudflare_worker.main import TestClient, TestServer, deploy_preview
 
 
-async def test_test_client(code_path: Path, loop):
-    preview_id = await deploy_preview(code_path, loop=loop)
+async def test_test_client(wrangler_dir: Path, loop):
+    preview_id = await deploy_preview(wrangler_dir, loop=loop)
     assert len(preview_id) == 32
 
     server = TestServer(preview_id, loop=loop)

@@ -1,19 +1,33 @@
 import json
 import secrets
-from asyncio import AbstractEventLoop, CancelledError, Event, sleep
+import subprocess
+from asyncio import AbstractEventLoop, CancelledError, Event, sleep as async_sleep
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import aiohttp
+import toml
 from aiohttp import ClientResponse, WSMessage, WSMsgType
 from aiohttp.test_utils import BaseTestServer as AiohttpTestServer, TestClient as AiohttpTestClient
 from aiohttp.web_runner import BaseRunner
 from yarl import URL
 
 
-async def deploy_preview(code: Path, *, loop: Optional[AbstractEventLoop] = None) -> str:
+async def deploy_preview(wrangler_dir: Path, *, loop: Optional[AbstractEventLoop] = None) -> str:
+    assert wrangler_dir.is_dir()
+    wrangler_path = wrangler_dir / 'wrangler.toml'
+    assert wrangler_path.is_file()
+    wrangler_data = toml.loads(wrangler_path.read_text())
+    debug(wrangler_data)
+    if wrangler_data['type'] == 'javascript':
+        source_path = wrangler_dir / 'index.js'
+    else:
+        subprocess.run(('wrangler', 'build'), check=True)
+        source_path = wrangler_dir / 'dist' / 'index.js'
+    assert source_path.is_file()
+
     async with aiohttp.ClientSession(loop=loop) as client:
-        async with client.post('https://cloudflareworkers.com/script', data=code.read_bytes()) as r:
+        async with client.post('https://cloudflareworkers.com/script', data=source_path.read_bytes()) as r:
             r.raise_for_status()
             data = await r.json()
     return data['id']
@@ -97,11 +111,14 @@ class TestClient(AiohttpTestClient):
 
         return await super()._request(method, path, headers=headers, **kwargs)
 
-    async def logs(self, await_count: int = 1) -> List['LogMsg']:
+    async def logs(self, await_count: int = 1, sleep: float = None) -> List['LogMsg']:
+        if sleep is not None:
+            await async_sleep(sleep)
+            return self._log
         for _ in range(200):
             if len(self._log) >= await_count:
                 return self._log
-            await sleep(0.01)
+            await async_sleep(0.01)
         raise RuntimeError(f'{await_count} logs not received')
 
     async def _watch(self, ready_event: Event):
@@ -129,16 +146,21 @@ ignored_methods = {
 
 
 class LogMsg:
-    def __init__(self, level: str, args: List[Any], extra):
-        self.level = level
-        self.raw_args = args
-        self.extra = extra
-        self.args = []
-        for arg in args:
-            if arg['type'] in {'string', 'number'}:
-                self.args.append(arg['value'])
-            else:
-                self.args.append(str(arg['preview']))
+    def __init__(self, method: str, data):
+        self.extra = data
+        params = data['params']
+        if method == 'Runtime.consoleAPICalled':
+            self.level = params['type'].upper()
+            str_args = []
+            for arg in params['args']:
+                if arg['type'] in {'string', 'number'}:
+                    str_args.append(arg['value'])
+                else:
+                    str_args.append(str(arg['preview']))
+            self.display = ' '.join(str_args)
+        elif method == 'Runtime.exceptionThrown':
+            self.level = 'ERROR'
+            self.display = params['exceptionDetails']['exception']['preview']['description']
 
     @classmethod
     def from_raw(cls, msg: WSMessage) -> Optional['LogMsg']:
@@ -150,8 +172,8 @@ class LogMsg:
         if not method or method in ignored_methods:
             return
 
-        if method == 'Runtime.consoleAPICalled':
-            return cls(data['params']['type'], data['params']['args'], data)
+        if method in {'Runtime.consoleAPICalled', 'Runtime.exceptionThrown'}:
+            return cls(method, data)
         else:
             raise RuntimeError(f'unknown message from inspect websocket, type {method}\n{data}')
 
@@ -159,7 +181,7 @@ class LogMsg:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level.upper()}: {" ".join(self.args)}'
+        return f'{self.level.upper()}: {self.display}'
 
     def __repr__(self):
         return repr(str(self))
