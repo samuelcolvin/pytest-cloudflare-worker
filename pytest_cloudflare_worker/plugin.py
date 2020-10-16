@@ -5,20 +5,19 @@ import pytest
 import rtoml
 from aiohttp.test_utils import loop_context
 
-from .main import deploy_preview, TestServer, TestClient
+from .main import TestClient, TestServer, deploy_preview
+
 __version__ = ('pytest_addoption',)
 
 
-def pytest_addoption(parser):  # type: ignore
-    parser.addoption(
-        '--wrangler-dir', action='store', default='.',
-        help='which directory to find wrangler.toml in')
+def pytest_addoption(parser):
+    parser.addoption('--wrangler-dir', action='store', default='.', help='directory in which to find wrangler.toml')
 
 
-@pytest.fixture(name='load_source', scope='session')
-def _fix_load_source(request):
+@pytest.fixture(name='js_source', scope='session')
+def _fix_js_source(request):
     """
-    Load source from wrangler, optionally building if required.
+    Find javascript source, optionally build using wrangler if required.
     """
     wrangler_dir = Path(request.config.getoption('--wrangler-dir')).resolve()
     assert wrangler_dir.is_dir()
@@ -35,12 +34,12 @@ def _fix_load_source(request):
 
 
 @pytest.fixture(name='preview_id', scope='session')
-def _fix_preview_id(load_source: Path):
+def _fix_preview_id(js_source: Path):
     """
     Deploy the preview and return the preview id.
     """
     with loop_context(fast=True) as loop:
-        preview_id = loop.run_until_complete(deploy_preview(load_source))
+        preview_id = loop.run_until_complete(deploy_preview(js_source))
     return preview_id
 
 

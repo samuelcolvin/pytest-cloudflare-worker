@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pytest_cloudflare_worker.main import deploy_preview, TestServer, TestClient
+from pytest_cloudflare_worker.main import TestClient, TestServer, deploy_preview
 
 
 async def test_test_client(code_path: Path, loop):

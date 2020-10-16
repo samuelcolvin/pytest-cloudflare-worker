@@ -1,11 +1,11 @@
 import secrets
 from asyncio import AbstractEventLoop
 from pathlib import Path
-from typing import Optional, Any, Dict
+from typing import Any, Dict, Optional
 
 import aiohttp
 from aiohttp import ClientResponse
-from aiohttp.test_utils import TestClient as AiohttpTestClient, BaseTestServer as AiohttpTestServer
+from aiohttp.test_utils import BaseTestServer as AiohttpTestServer, TestClient as AiohttpTestClient
 from aiohttp.web_runner import BaseRunner
 from yarl import URL
 
@@ -50,11 +50,14 @@ class TestClient(AiohttpTestClient):
 
     To write functional tests for aiohttp based servers.
     """
+
     def __init__(self, server: TestServer, fake_host: str = 'example.com', **kwargs):
         super().__init__(server, **kwargs)
         self.fake_host = fake_host
 
-    async def _request(self, method: str, path: str, *, headers: Dict[str, str] = None, **kwargs: Any) -> ClientResponse:
+    async def _request(
+        self, method: str, path: str, *, headers: Dict[str, str] = None, **kwargs: Any
+    ) -> ClientResponse:
         url = URL(path)
         assert not url.is_absolute(), f'path "{url}" must be relative'
 
