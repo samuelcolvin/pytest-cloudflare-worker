@@ -1,0 +1,10 @@
+name = "pytest-test"
+type = "javascript"
+account_id = "d6252a570c309c113744c9e11317e271"
+workers_dev = true
+route = ""
+zone_id = ""
+
+#kv_namespaces = [
+#    { binding = "PACKAGES", id = "f3480b52baca4224a9c46e7296293376", preview_id = "32162418db734f5a8d33f234ba160102" }
+#]
