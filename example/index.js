@@ -13,6 +13,10 @@ async function handleRequest(request) {
       params: as_object(url.searchParams),
     },
     body: await request.text(),
+    vars: {
+      FOO,
+      SPAM,
+    },
   }
   const headers = { 'x-foo': 'bar', 'content-type': 'application/json' }
   return new Response(JSON.stringify(data, null, 2) + '\n', { headers })

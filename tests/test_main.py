@@ -10,7 +10,7 @@ async def test_test_client(wrangler_dir: Path, loop):
     server = TestServer(preview_id, loop=loop)
     async with TestClient(server, loop=loop) as client:
         r = await client.get('/the/path/')
-        assert r.status == 200
+        assert r.status == 200, await client.logs(sleep=1)
         assert r.headers['x-foo'] == 'bar'
         obj = await r.json()
         # debug(obj)
@@ -24,7 +24,8 @@ async def test_test_client(wrangler_dir: Path, loop):
                 'params': {},
             },
             'body': '',
+            'vars': {'FOO': 'bar', 'SPAM': 'spam'},
         }
         assert headers['user-agent'].startswith('Python')
-        logs = await client.logs(log_count=1)
-        assert logs == ['LOG: handling request: GET /the/path/']
+        # logs = await client.logs(log_count=1)
+        # assert logs == ['LOG: handling request: GET /the/path/']

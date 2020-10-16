@@ -8,3 +8,7 @@ zone_id = ""
 #kv_namespaces = [
 #    { binding = "PACKAGES", id = "f3480b52baca4224a9c46e7296293376", preview_id = "32162418db734f5a8d33f234ba160102" }
 #]
+
+[vars]
+FOO = 'bar'
+SPAM = 'spam'
