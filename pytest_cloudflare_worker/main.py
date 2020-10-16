@@ -111,15 +111,15 @@ class TestClient(AiohttpTestClient):
 
         return await super()._request(method, path, headers=headers, **kwargs)
 
-    async def logs(self, await_count: int = 1, sleep: float = None) -> List['LogMsg']:
+    async def logs(self, *, log_count: int = 0, sleep: float = None) -> List['LogMsg']:
         if sleep is not None:
             await async_sleep(sleep)
             return self._log
         for _ in range(200):
-            if len(self._log) >= await_count:
+            if len(self._log) >= log_count:
                 return self._log
             await async_sleep(0.01)
-        raise RuntimeError(f'{await_count} logs not received')
+        raise RuntimeError(f'{log_count} logs not received')
 
     async def _watch(self, ready_event: Event):
         try:

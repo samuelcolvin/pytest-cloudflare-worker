@@ -4,5 +4,5 @@ async def test_basic_client_usage(client):
     obj = await r.json()
     assert obj['method'] == 'GET'
     assert r.headers['x-foo'] == 'bar'
-    log = await client.logs(1)
+    log = await client.logs(log_count=1)
     assert log == ['LOG: handling request: GET /']
