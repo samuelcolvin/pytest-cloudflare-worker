@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import rtoml
+import toml
 from aiohttp.test_utils import loop_context
 
 from .main import TestClient, TestServer, deploy_preview
@@ -23,7 +23,7 @@ def _fix_js_source(request):
     assert wrangler_dir.is_dir()
     wrangler_path = wrangler_dir / 'wrangler.toml'
     assert wrangler_path.is_file()
-    data = rtoml.loads(wrangler_path.read_text())
+    data = toml.loads(wrangler_path.read_text())
     if data['type'] == 'javascript':
         source_path = wrangler_dir / 'index.js'
     else:
@@ -44,10 +44,14 @@ def _fix_preview_id(js_source: Path):
 
 
 @pytest.fixture(name='client')
-async def _fix_client(preview_id: str, loop):
+def _fix_client(preview_id: str, loop):
     """
     Create a test client.
     """
     server = TestServer(preview_id, loop=loop)
-    async with TestClient(server, loop=loop) as client:
-        yield client
+    client = TestClient(server, loop=loop)
+    loop.run_until_complete(client.start_server())
+
+    yield client
+
+    loop.run_until_complete(client.close())

@@ -50,6 +50,6 @@ setup(
         'aiohttp>=3.6.2',
         'pytest>=6.0.0',
         'pytest-aiohttp>=0.3.0',
-        'rtoml>=0.4.0',
+        'toml>=0.10.1',
     ],
 )

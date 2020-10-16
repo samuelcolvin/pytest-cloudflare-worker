@@ -9,3 +9,5 @@ htmlcov/
 /sandbox/
 /build/
 /dist/
+/example/node_modules/
+/example/yarn.lock
