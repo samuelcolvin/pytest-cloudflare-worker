@@ -1,6 +1,6 @@
 import json
-import secrets
 import subprocess
+import uuid
 from asyncio import AbstractEventLoop, CancelledError, Event, sleep as async_sleep
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -104,7 +104,7 @@ class TestClient(AiohttpTestClient):
         super().__init__(server, **kwargs)
         self.fake_host = fake_host
         self._log: List[LogMsg] = []
-        self.session_id = secrets.token_hex()[:32]
+        self.session_id = uuid.uuid4().hex
         self.watch_task = None
 
     async def start_server(self) -> None:
@@ -140,7 +140,14 @@ class TestClient(AiohttpTestClient):
             if len(self._log) >= log_count:
                 return self._log
             await async_sleep(0.01)
-        raise RuntimeError(f'{log_count} logs not received')
+
+        if log_count == 0:
+            msg = 'no logs received'
+        elif log_count == 1:
+            msg = '1 log not received'
+        else:
+            msg = f'{log_count} logs not received'
+        raise RuntimeError(msg)
 
     async def _watch(self, ready_event: Event):
         try:
@@ -179,9 +186,12 @@ class LogMsg:
                 else:
                     str_args.append(str(arg['preview']))
             self.display = ' '.join(str_args)
+            frame = params['stackTrace']['callFrames'][0]
+            self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
             self.display = params['exceptionDetails']['exception']['preview']['description']
+            self.line = ''  # TODO
 
     @classmethod
     def from_raw(cls, msg: WSMessage) -> Optional['LogMsg']:
@@ -202,7 +212,7 @@ class LogMsg:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level.upper()}: {self.display}'
+        return f'{self.level} {self.line}: {self.display}'
 
     def __repr__(self):
         return repr(str(self))

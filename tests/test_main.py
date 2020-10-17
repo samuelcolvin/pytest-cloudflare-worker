@@ -27,5 +27,5 @@ async def test_test_client(wrangler_dir: Path, loop):
             'vars': {'FOO': 'bar', 'SPAM': 'spam'},
         }
         assert headers['user-agent'].startswith('Python')
-        # logs = await client.logs(log_count=1)
-        # assert logs == ['LOG: handling request: GET /the/path/']
+        logs = await client.logs(log_count=1)
+        assert logs == ['LOG worker.js:5: handling request: GET /the/path/']
