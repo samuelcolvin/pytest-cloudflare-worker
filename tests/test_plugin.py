@@ -58,7 +58,6 @@ def test_worker_error(client: TestClient):
 
 
 def test_client_console(client: TestClient):
-    client.fake_host = 'different.com'
     r = client.get('/console')
     assert r.status_code == 200
     logs = client.inspect_log_wait(4)
