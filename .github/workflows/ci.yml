@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   push:
@@ -30,6 +30,8 @@ jobs:
       run: |
         make test
         coverage xml
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     - uses: codecov/codecov-action@v1.0.13
       with:
@@ -57,7 +59,7 @@ jobs:
     needs:
       - test
       - lint
-#    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
 
     steps:
@@ -75,8 +77,6 @@ jobs:
 
       - name: set version
         run: VERSION_PATH='pytest_cloudflare_worker/version.py' python <(curl -Ls https://git.io/JT3rm)
-        env:
-          VERSION: '0.0.1'
 
       - name: build
         run: python setup.py sdist bdist_wheel
