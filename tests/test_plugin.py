@@ -8,8 +8,8 @@ def test_client_get(client: TestClient):
     assert obj['method'] == 'GET'
     assert obj['headers']['host'] == 'example.com'
     assert r.headers['x-foo'] == 'bar'
-    # log = client.logs(1)
-    # assert log == ['LOG worker.js:5: handling request: GET /']
+    log = client.inspect_log_wait(1)
+    assert log == ['LOG worker.js:5> "handling request:", "GET", "/"']
 
 
 def test_client_post(client: TestClient):
@@ -30,5 +30,5 @@ def test_client_post(client: TestClient):
         'body': '{"foo": "bar"}',
     }
     assert r.headers['x-foo'] == 'bar'
-    # log = client.logs(1)
-    # assert log == ['LOG worker.js:5: handling request: GET /']
+    log = client.inspect_log_wait(1)
+    assert log == ['LOG worker.js:5> "handling request:", "PUT", "/foo/bar"']

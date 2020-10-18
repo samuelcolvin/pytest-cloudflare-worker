@@ -5,6 +5,7 @@ import subprocess
 import uuid
 from pathlib import Path
 from threading import Event, Thread
+from time import sleep, time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -132,8 +133,14 @@ class TestClient(Session):
 
         return super().request(method, self._root + path, headers=headers, **kwargs)
 
-    # def logs(self, log_count: Optional[int] = None, *, wait_time: float = 2) -> List['LogMsg']:
-    #     return asyncio.run(self._async_logs(log_count, wait_time))
+    def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
+        start = time()
+        while True:
+            if count is not None and len(self.inspect_logs) >= count:
+                return self.inspect_logs
+            elif time() - start > wait_time:
+                return self.inspect_logs
+            sleep(0.1)
 
     def _start_inspect(self):
         self._inspect_ready.clear()
@@ -145,9 +152,15 @@ class TestClient(Session):
         self._inspect_thread.start()
 
     def _stop_inspect(self):
-        if self._inspect_thread:
+        if self._inspect_thread is not None:
             self._inspect_stop.set()
-            self._inspect_thread.join(1)
+            t = self._inspect_thread
+            self._inspect_thread = None
+            t.join(1)
+
+    def close(self) -> None:
+        super().close()
+        self._stop_inspect()
 
 
 def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
@@ -168,7 +181,6 @@ def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
                     log_msg = LogMsg.from_raw(msg)
                     if log_msg:
                         log.append(log_msg)
-                        print(log)
 
                 if stop.is_set():
                     return
@@ -206,13 +218,15 @@ class LogMsg:
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
             self.args = [self.parse_arg(arg) for arg in params['args']]
-            self.display = ' '.join(str(arg) for arg in self.args)
+            self.display = ', '.join(json.dumps(arg) for arg in self.args)
             frame = params['stackTrace']['callFrames'][0]
-            self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
+            self.file = frame['url']
+            self.line = frame['lineNumber'] + 1
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
             self.display = params['exceptionDetails']['exception']['preview']['description']
-            self.line = ''  # TODO
+            self.file = '-'
+            self.line = '-'
 
     @classmethod
     def from_raw(cls, msg: str) -> Optional['LogMsg']:
@@ -245,7 +259,7 @@ class LogMsg:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level} {self.line}: {self.display}'
+        return f'{self.level} {self.file}:{self.line}> {self.display}'
 
     def __repr__(self):
         return repr(str(self))
