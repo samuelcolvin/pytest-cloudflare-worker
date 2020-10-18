@@ -77,7 +77,7 @@ class DeployPreview:
         else:
             api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
 
-        assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
+        # assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
         return toml.loads(api_token_path.read_text())['api_token']
 
     def _upload(self, url: str, **kwargs) -> Dict[str, Any]:
@@ -138,11 +138,10 @@ class TestClient(Session):
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
         start = time()
         while True:
-            # debug(count, self._session_id, self.inspect_logs)
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
-                return self.inspect_logs
+                raise TimeoutError(f'only {len(self.inspect_logs)} logs receives, fewer than {count} expected')
             sleep(0.1)
 
     def _start_inspect(self):
