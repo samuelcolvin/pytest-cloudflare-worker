@@ -5,4 +5,4 @@ async def test_basic_client_usage(client):
     assert obj['method'] == 'GET'
     assert r.headers['x-foo'] == 'bar'
     log = await client.logs(log_count=1)
-    assert log == ['LOG: handling request: GET /']
+    assert log == ['LOG worker.js:5: handling request: GET /']

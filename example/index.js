@@ -1,6 +1,6 @@
-addEventListener('fetch', e => e.respondWith(handleRequest(e.request)))
+addEventListener('fetch', e => e.respondWith(handle(e.request)))
 
-async function handleRequest(request) {
+async function handle(request) {
   const url = new URL(request.url)
   console.log('handling request:', request.method, url.pathname)
   const data = {
@@ -14,9 +14,23 @@ async function handleRequest(request) {
     },
     body: await request.text(),
   }
+  const path = clean_path(url)
+
+  if (path === 'vars') {
+    data['vars'] = {FOO, SPAM}
+  } else if (path === 'kv') {
+    const key = url.searchParams.get('key') || 'the-key'
+    const value = url.searchParams.get('value') || 'the-value'
+    console.log('settings KV', {[key]: value})
+    await THINGS.put(key, value, {expirationTtl: 3600})
+    data['KV'] = {[key]: await THINGS.get(key)}
+  }
+
   const headers = { 'x-foo': 'bar', 'content-type': 'application/json' }
   return new Response(JSON.stringify(data, null, 2) + '\n', { headers })
 }
+
+const clean_path = url => url.pathname.substr(1).replace(/\/+$/, '')
 
 const as_object = v => {
   const entries = Array.from(v.entries())

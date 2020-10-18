@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   push:
@@ -22,24 +22,46 @@ jobs:
 
     - name: install dependencies
       run: |
-        make install
+        pip install -U pip
+        pip install -r tests/requirements.txt
+        pip install -e .
         pip freeze
-
-    - name: lint
-      run: make lint
 
     - name: test
       run: |
         make test
         coverage xml
+      env:
+        CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
     - uses: codecov/codecov-action@v1.0.13
       with:
         file: ./coverage.xml
 
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: set up python
+      uses: actions/setup-python@v1
+      with:
+        python-version: '3.8'
+
+    - name: install dependencies
+      run: |
+        pip install -U pip
+        pip install -r tests/requirements-linting.txt
+
+    - name: lint
+      run: make lint
+
   deploy:
     name: Deploy
-    needs: test
+    needs:
+      - test
+      - lint
     if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
 
@@ -53,14 +75,17 @@ jobs:
 
       - name: install
         run: |
-          make install
-          pip install -U wheel twine
+          pip install -U pip setuptools wheel twine
+          pip install -e .
+
+      - name: set version
+        run: VERSION_PATH='pytest_cloudflare_worker/version.py' python <(curl -Ls https://git.io/JT3rm)
 
       - name: build
         run: python setup.py sdist bdist_wheel
 
-      - name: set version
-        run: VERSION_PATH='pytest_cloudflare_worker/version.py' python <(curl -Ls https://git.io/JT3rm)
+      - name: check
+        run: twine check dist/*
 
       - name: upload to pypi
         run: twine upload dist/*

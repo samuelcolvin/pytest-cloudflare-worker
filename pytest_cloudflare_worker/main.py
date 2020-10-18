@@ -1,36 +1,87 @@
 import json
-import secrets
+import os
 import subprocess
+import uuid
 from asyncio import AbstractEventLoop, CancelledError, Event, sleep as async_sleep
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 import toml
-from aiohttp import ClientResponse, WSMessage, WSMsgType
+from aiohttp import ClientResponse, FormData, WSMessage, WSMsgType
 from aiohttp.test_utils import BaseTestServer as AiohttpTestServer, TestClient as AiohttpTestClient
 from aiohttp.web_runner import BaseRunner
 from yarl import URL
 
+__all__ = 'DeployPreview', 'TestServer', 'TestClient'
 
-async def deploy_preview(wrangler_dir: Path, *, loop: Optional[AbstractEventLoop] = None) -> str:
-    assert wrangler_dir.is_dir()
-    wrangler_path = wrangler_dir / 'wrangler.toml'
-    assert wrangler_path.is_file()
-    wrangler_data = toml.loads(wrangler_path.read_text())
-    debug(wrangler_data)
-    if wrangler_data['type'] == 'javascript':
-        source_path = wrangler_dir / 'index.js'
-    else:
-        subprocess.run(('wrangler', 'build'), check=True)
-        source_path = wrangler_dir / 'dist' / 'index.js'
-    assert source_path.is_file()
 
-    async with aiohttp.ClientSession(loop=loop) as client:
-        async with client.post('https://cloudflareworkers.com/script', data=source_path.read_bytes()) as r:
-            r.raise_for_status()
-            data = await r.json()
-    return data['id']
+class DeployPreview:
+    def __init__(self, wrangler_dir: Path, loop: Optional[AbstractEventLoop] = None) -> None:
+        self._wrangler_dir = wrangler_dir
+        self._loop = loop
+
+    async def deploy_auth(self) -> str:
+        source_path, wrangler_data = self._build_source()
+
+        url = (
+            f'https://api.cloudflare.com/client/v4/'
+            f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
+        )
+
+        bindings: List[Dict[str, str]] = []
+        for k, v in wrangler_data.get('vars', {}).items():
+            bindings.append({'name': k, 'type': 'plain_text', 'text': v})
+        for namespace in wrangler_data.get('kv_namespaces', []):
+            if preview_id := namespace.get('preview_id'):
+                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+        metadata = json.dumps({'body_part': source_path.name, 'binding': bindings})
+
+        data = FormData()
+        data.add_field('metadata', metadata, filename=source_path.name, content_type='application/json')
+        data.add_field(source_path.name, source_path.read_text(), filename=source_path.name)
+
+        api_token = self.get_api_token()
+        r = await self._upload(url, data, {'Authorization': f'Bearer {api_token}'})
+        return r['result']['preview_id']
+
+    async def deploy_anon(self) -> str:
+        source_path, wrangler_data = self._build_source()
+
+        r = await self._upload('https://cloudflareworkers.com/script', source_path.read_bytes())
+        return r['id']
+
+    def _build_source(self) -> Tuple[Path, Dict[str, Any]]:
+        assert self._wrangler_dir.is_dir()
+        wrangler_path = self._wrangler_dir / 'wrangler.toml'
+        assert wrangler_path.is_file()
+        wrangler_data = toml.loads(wrangler_path.read_text())
+        if wrangler_data['type'] == 'javascript':
+            source_path = self._wrangler_dir / 'index.js'
+        else:
+            subprocess.run(('wrangler', 'build'), check=True)
+            source_path = self._wrangler_dir / 'dist' / 'index.js'
+        assert source_path.is_file(), f'source path "{source_path}" not found'
+        return source_path, wrangler_data
+
+    @classmethod
+    def get_api_token(cls) -> str:
+        if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
+            return api_token
+
+        if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
+            api_token_path = Path(path).expanduser()
+        else:
+            api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
+
+        assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
+        return toml.loads(api_token_path.read_text())['api_token']
+
+    async def _upload(self, url: str, data: Union[bytes, FormData], headers: Dict[str, str] = None) -> Dict[str, Any]:
+        async with aiohttp.ClientSession(loop=self._loop) as client:
+            async with client.post(url, data=data, headers=headers) as r:
+                r.raise_for_status()
+                return await r.json()
 
 
 class TestServer(AiohttpTestServer):
@@ -83,7 +134,7 @@ class TestClient(AiohttpTestClient):
         super().__init__(server, **kwargs)
         self.fake_host = fake_host
         self._log: List[LogMsg] = []
-        self.session_id = secrets.token_hex()[:32]
+        self.session_id = uuid.uuid4().hex
         self.watch_task = None
 
     async def start_server(self) -> None:
@@ -119,7 +170,14 @@ class TestClient(AiohttpTestClient):
             if len(self._log) >= log_count:
                 return self._log
             await async_sleep(0.01)
-        raise RuntimeError(f'{log_count} logs not received')
+
+        if log_count == 0:
+            msg = 'no logs received'
+        elif log_count == 1:
+            msg = '1 log not received'
+        else:
+            msg = f'{log_count} logs not received'
+        raise RuntimeError(msg)
 
     async def _watch(self, ready_event: Event):
         try:
@@ -151,16 +209,14 @@ class LogMsg:
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
-            str_args = []
-            for arg in params['args']:
-                if arg['type'] in {'string', 'number'}:
-                    str_args.append(arg['value'])
-                else:
-                    str_args.append(str(arg['preview']))
-            self.display = ' '.join(str_args)
+            self.args = [parse_arg(arg) for arg in params['args']]
+            self.display = ' '.join(str(arg) for arg in self.args)
+            frame = params['stackTrace']['callFrames'][0]
+            self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
             self.display = params['exceptionDetails']['exception']['preview']['description']
+            self.line = ''  # TODO
 
     @classmethod
     def from_raw(cls, msg: WSMessage) -> Optional['LogMsg']:
@@ -181,7 +237,18 @@ class LogMsg:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level.upper()}: {self.display}'
+        return f'{self.level} {self.line}: {self.display}'
 
     def __repr__(self):
         return repr(str(self))
+
+
+def parse_arg(arg: Dict[str, Any]) -> Any:
+    arg_type = arg['type']
+    if arg_type in {'string', 'number'}:
+        return arg['value']
+    elif arg_type == 'object':
+        return {p['name']: p['value'] for p in arg['preview']['properties']}
+    else:
+        # TODO
+        return str(arg['preview'])
