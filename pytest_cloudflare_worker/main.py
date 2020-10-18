@@ -150,16 +150,13 @@ class TestClient(Session):
             raise WorkerError(error_logs)
         return response
 
-    def inspect_log_errors(self) -> List['LogMsg']:
-        return [msg for msg in self.inspect_logs if msg.level == 'ERROR']
-
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
         start = time()
         while True:
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
-                raise TimeoutError(f'only {len(self.inspect_logs)} logs receives, fewer than {count} expected')
+                raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
             self._wait_for_log()
 
     def _wait_for_log(self) -> None:
@@ -205,6 +202,7 @@ def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event, 
                     pass
                 else:
                     data = json.loads(msg)
+                    debug(data)
                     if data.get('id') == 8:  # this is the id of the last element of inspect_start_msgs
                         ready.set()
 
@@ -243,7 +241,7 @@ ignored_methods = {
 
 class LogMsg:
     def __init__(self, method: str, data):
-        # debug(data)
+        print(data)
         self.full = data
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
@@ -274,17 +272,31 @@ class LogMsg:
     @classmethod
     def parse_arg(cls, arg: Dict[str, Any]) -> Any:
         arg_type = arg['type']
-        if arg_type in {'string', 'number'}:
-            return arg['value']
-        elif arg_type == 'object':
-            if 'preview' in arg:
-                return {p['name']: p['value'] for p in arg['preview']['properties']}
-            else:
-                # ???
-                return {}
-        else:
-            # TODO
-            return str(arg['preview'])
+        value = arg.get('value')
+        if arg_type == 'string':
+            return value
+        if arg_type == 'number':
+            return float(value)
+        elif arg_type == 'boolean':
+            return value == 'true'
+        elif value == 'null':
+            return None
+        elif value == 'undefined':
+            # no good python equivalent
+            return '<undefined>'
+
+        sub_type = arg.get('subtype')
+        preview = arg.get('preview')
+        if (arg_type, sub_type) == ('object', 'array'):
+            return [cls.parse_arg(item) for item in preview['properties']]
+        elif (arg_type, sub_type) == ('object', 'date'):
+            return arg['description']
+        elif arg_type == 'object' and arg.get('className') == 'Object':
+            return {p['name']: cls.parse_arg(p) for p in preview['properties']}
+
+        # TODO
+        print('unknown arg:', arg)
+        return str(arg)
 
     def __eq__(self, other: Any) -> str:
         return other == str(self)

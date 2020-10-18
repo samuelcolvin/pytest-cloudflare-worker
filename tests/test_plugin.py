@@ -55,3 +55,12 @@ def test_worker_error(client: TestClient):
     """
     with pytest.raises(WorkerError, match='worker.js:19> ReferenceError: FOO is not defined'):
         client.get('/vars/')
+
+
+def test_client_console(client: TestClient):
+    client.fake_host = 'different.com'
+    r = client.get('/console')
+    assert r.status_code == 200
+    log = client.inspect_log_wait(4)
+    debug(log)
+    # assert log == ['LOG worker.js:5> "handling request:", "PUT", "/foo/bar"']

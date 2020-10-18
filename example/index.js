@@ -24,6 +24,11 @@ async function handle(request) {
     // console.log('settings KV', {[key]: value})
     await THINGS.put(key, value, {expirationTtl: 3600})
     data['KV'] = {[key]: await THINGS.get(key)}
+  } else if (path === 'console') {
+    console.log('object', {foo: 'bar', spam: 1})
+    console.log('list', ['s', 1, 2.0, true, false, null, undefined])
+    const n = new Date()
+    console.log('date', n)
   }
 
   const headers = { 'x-foo': 'bar', 'content-type': 'application/json' }
