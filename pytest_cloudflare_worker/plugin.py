@@ -13,7 +13,6 @@ def pytest_addoption(parser):
     parser.addoption(
         '--cf-anon-client',
         action='store_true',
-
         default=False,
         help=(
             "whether the anonymous cloudflare worker preview endpoint, if set "  # noqa: Q000
