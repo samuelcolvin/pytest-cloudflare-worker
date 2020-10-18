@@ -3,12 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from pytest_cloudflare_worker.main import DeployPreview, TestClient
-
 auth_test = pytest.mark.skipif(not os.getenv('CLOUDFLARE_API_TOKEN'), reason='requires CLOUDFLARE_API_TOKEN env var')
 
 
 def test_anon_client(wrangler_dir: Path):
+    from pytest_cloudflare_worker.main import DeployPreview, TestClient
+
     with TestClient() as client:
         preview_id = DeployPreview(wrangler_dir, client).deploy_anon()
         assert len(preview_id) == 32
@@ -37,7 +37,11 @@ def test_anon_client(wrangler_dir: Path):
 
 @auth_test
 def test_auth_client_vars(wrangler_dir: Path):
-    preview_id = DeployPreview(wrangler_dir, ).deploy_auth()
+    from pytest_cloudflare_worker.main import DeployPreview, TestClient
+
+    preview_id = DeployPreview(
+        wrangler_dir,
+    ).deploy_auth()
 
     with TestClient(preview_id=preview_id, fake_host='foobar.com') as client:
         r = client.get('/vars/')
@@ -57,6 +61,8 @@ def test_auth_client_vars(wrangler_dir: Path):
 
 @auth_test
 def test_auth_client_kv(wrangler_dir: Path):
+    from pytest_cloudflare_worker.main import DeployPreview, TestClient
+
     with TestClient() as client:
         client.preview_id = DeployPreview(wrangler_dir).deploy_auth()
         r = client.post('/kv/', params={'key': 'foo'}, data='this is a test')

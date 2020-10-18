@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import toml
 import websockets
-from requests import Session, Response
+from requests import Response, Session
 
 from .version import VERSION
 
@@ -39,7 +39,7 @@ class DeployPreview:
 
         files = {
             'metadata': ('metadata.json', metadata, 'application/json'),
-            source_path.name: (source_path.name, source_path.read_text(), 'text/plain')
+            source_path.name: (source_path.name, source_path.read_text(), 'text/plain'),
         }
 
         api_token = self.get_api_token()
