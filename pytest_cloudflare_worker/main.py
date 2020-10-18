@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import uuid
+import warnings
 from pathlib import Path
 from threading import Event, Thread
 from time import time
@@ -293,12 +294,23 @@ class LogMsg:
         elif arg_type == 'object' and arg.get('className') == 'Object':
             return {p['name']: cls.parse_arg(p) for p in preview['properties']}
 
-        # TODO
-        print('unknown arg:', arg)
+        warnings.warn(f'unknown inspect log argument {arg}')
         return str(arg)
 
-    def __eq__(self, other: Any) -> str:
-        return other == str(self)
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return other == str(self)
+        elif isinstance(other, dict):
+            self_dict = {k: self.__dict__[k] for k in other.keys()}
+            return other == self_dict
+        else:
+            return False
+
+    def endswith(self, *s: str) -> bool:
+        return str(self).endswith(*s)
+
+    def startswith(self, *s: str) -> bool:
+        return str(self).startswith(*s)
 
     def __str__(self):
         return f'{self.level} {self.file}:{self.line}> {self.message}'

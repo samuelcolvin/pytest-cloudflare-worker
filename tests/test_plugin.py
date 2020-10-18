@@ -61,6 +61,14 @@ def test_client_console(client: TestClient):
     client.fake_host = 'different.com'
     r = client.get('/console')
     assert r.status_code == 200
-    log = client.inspect_log_wait(4)
-    print(log)
-    # assert log == ['LOG worker.js:5> "handling request:", "PUT", "/foo/bar"']
+    logs = client.inspect_log_wait(4)
+    # debug(log)
+    assert logs == [
+        'LOG worker.js:5> "handling request:", "GET", "/console"',
+        'LOG worker.js:28> "object", {"foo": "bar", "spam": 1.0}',
+        'LOG worker.js:29> "list", ["s", 1.0, 2.0, true, false, null, "<undefined>"]',
+        {'level': 'LOG', 'file': 'worker.js', 'line': 31}
+    ]
+    assert logs[2].message == '"list", ["s", 1.0, 2.0, true, false, null, "<undefined>"]'
+    assert logs[2].args == ['list', ['s', 1, 2, True, False, None, '<undefined>']]
+    assert logs[3].endswith('(Coordinated Universal Time)"')
