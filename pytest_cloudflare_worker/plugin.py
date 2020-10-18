@@ -1,9 +1,8 @@
 from pathlib import Path
 
 import pytest
-from aiohttp.test_utils import loop_context
 
-from .main import DeployPreview, TestClient, TestServer
+from .main import DeployPreview, TestClient
 
 __version__ = ('pytest_addoption',)
 
@@ -21,31 +20,27 @@ def pytest_addoption(parser):
     )
 
 
-@pytest.fixture(name='preview_id', scope='session')
-def _fix_preview_id(request):
+@pytest.fixture(name='session_client', scope='session')
+def _fix_session_client(request):
     """
-    Deploy the preview and return the preview id.
+    Create a test client and deploy the worker preview to cloudflare.
     """
     wrangler_dir = Path(request.config.getoption('--cf-wrangler-dir')).resolve()
     anon_client: bool = request.config.getoption('--cf-anon-client')
-    with loop_context(fast=True) as loop:
-        deployer = DeployPreview(wrangler_dir, loop)
-        if anon_client:
-            preview_id = loop.run_until_complete(deployer.deploy_anon())
-        else:
-            preview_id = loop.run_until_complete(deployer.deploy_auth())
-    return preview_id
+    client = TestClient()
+    deployer = DeployPreview(wrangler_dir, client)
+    if anon_client:
+        client.preview_id = deployer.deploy_anon()
+    else:
+        client.preview_id = deployer.deploy_auth()
+    return client
 
 
 @pytest.fixture(name='client')
-def _fix_client(preview_id: str, loop):
+def _fix_client(session_client: TestClient):
     """
     Create a test client.
     """
-    server = TestServer(preview_id, loop=loop)
-    client = TestClient(server, loop=loop)
-    loop.run_until_complete(client.start_server())
+    session_client.new_cf_session()
 
-    yield client
-
-    loop.run_until_complete(client.close())
+    return session_client
