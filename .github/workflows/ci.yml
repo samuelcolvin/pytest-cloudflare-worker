@@ -57,7 +57,7 @@ jobs:
     needs:
       - test
       - lint
-    if: "success() && startsWith(github.ref, 'refs/tags/')"
+#    if: "success() && startsWith(github.ref, 'refs/tags/')"
     runs-on: ubuntu-latest
 
     steps:
@@ -70,14 +70,19 @@ jobs:
 
       - name: install
         run: |
-          make install
-          pip install -U wheel twine
+          pip install -U pip setuptools wheel twine
+          pip install -e .
+
+      - name: set version
+        run: VERSION_PATH='pytest_cloudflare_worker/version.py' python <(curl -Ls https://git.io/JT3rm)
+        env:
+          VERSION: '0.0.1'
 
       - name: build
         run: python setup.py sdist bdist_wheel
 
-      - name: set version
-        run: VERSION_PATH='pytest_cloudflare_worker/version.py' python <(curl -Ls https://git.io/JT3rm)
+      - name: check
+        run: twine check dist/*
 
       - name: upload to pypi
         run: twine upload dist/*

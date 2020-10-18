@@ -7,7 +7,7 @@ install:
 	pip install -U setuptools pip
 	pip install -r tests/requirements.txt
 	pip install -r tests/requirements-linting.txt
-	pip install -U -e .
+	pip install -e .
 
 .PHONY: format
 format:
