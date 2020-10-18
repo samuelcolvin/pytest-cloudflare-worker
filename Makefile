@@ -22,11 +22,13 @@ lint:
 
 .PHONY: test
 test:
-	pytest --cov=pytest_cloudflare_worker
+	coverage run -m pytest
+	@coverage report
 
 .PHONY: testcov
 testcov:
-	pytest --cov=pytest_cloudflare_worker
+	coverage run -m pytest
+	@coverage report
 	@echo "building coverage html"
 	@coverage html
 

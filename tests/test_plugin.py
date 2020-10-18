@@ -39,7 +39,7 @@ def test_client_request(client: TestClient):
     assert client.get('/2').status_code == 200
     assert client.get('/3').status_code == 200
     log = client.inspect_log_wait(3)
-    debug(log)
+    # debug(log)
     assert log == [
         'LOG worker.js:5> "handling request:", "GET", "/1"',
         'LOG worker.js:5> "handling request:", "GET", "/2"',
