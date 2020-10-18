@@ -71,3 +71,13 @@ def test_client_console(client: TestClient):
     assert logs[2].message == '"list", ["s", 1.0, 2.0, true, false, null, "<undefined>"]'
     assert logs[2].args == ['list', ['s', 1, 2, True, False, None, '<undefined>']]
     assert logs[3].endswith('(Coordinated Universal Time)"')
+    with pytest.raises(TimeoutError, match='4 logs received, expected 10'):
+        client.inspect_log_wait(10, wait_time=0)
+
+
+def test_inspect_disabled(client: TestClient):
+    client.inspect_enabled = False
+    r = client.get('/console')
+    assert r.status_code == 200
+
+    assert len(client.inspect_logs) == 0

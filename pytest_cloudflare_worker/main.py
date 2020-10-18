@@ -130,9 +130,10 @@ class TestClient(Session):
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
-        if self.inspect_enabled and self._inspect_thread is None:
-            self._start_inspect()
-        self._inspect_ready.wait(2)
+        if self.inspect_enabled:
+            if self._inspect_thread is None:
+                self._start_inspect()
+            self._inspect_ready.wait(2)
 
         headers = headers or {}
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
@@ -143,7 +144,7 @@ class TestClient(Session):
         response = super().request(method, self._root + path, headers=headers, **kwargs)
         if response.status_code >= 500:
             error_logs = []
-            for i in range(100):
+            for i in range(100):  # pragma: no branch
                 error_logs = [msg for msg in self.inspect_logs[logs_before:] if msg.level == 'ERROR']
                 if error_logs:
                     break
@@ -152,6 +153,7 @@ class TestClient(Session):
         return response
 
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
+        assert self.inspect_enabled, 'inspect_log_wait make no sense without inspect_enabled=True'
         start = time()
         while True:
             if count is not None and len(self.inspect_logs) >= count:
