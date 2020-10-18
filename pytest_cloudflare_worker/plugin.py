@@ -33,7 +33,9 @@ def _fix_session_client(request):
         client.preview_id = deployer.deploy_anon()
     else:
         client.preview_id = deployer.deploy_auth()
-    return client
+    yield client
+
+    client.close()
 
 
 @pytest.fixture(name='client')

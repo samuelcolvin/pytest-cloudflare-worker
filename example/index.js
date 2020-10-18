@@ -9,7 +9,6 @@ async function handle(request) {
     url: {
       hostname: url.hostname,
       pathname: url.pathname,
-      hash: url.hash,
       params: as_object(url.searchParams),
     },
     body: await request.text(),
@@ -20,8 +19,9 @@ async function handle(request) {
     data['vars'] = {FOO, SPAM}
   } else if (path === 'kv') {
     const key = url.searchParams.get('key') || 'the-key'
-    const value = url.searchParams.get('value') || 'the-value'
-    console.log('settings KV', {[key]: value})
+    const value = data['body']
+    console.log('settings KV', key, value)
+    // console.log('settings KV', {[key]: value})
     await THINGS.put(key, value, {expirationTtl: 3600})
     data['KV'] = {[key]: await THINGS.get(key)}
   }

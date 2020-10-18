@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
 import toml
 import websockets
 from requests import Session, Response
@@ -16,9 +17,9 @@ __all__ = 'DeployPreview', 'TestClient'
 
 
 class DeployPreview:
-    def __init__(self, wrangler_dir: Path, session: Session) -> None:
+    def __init__(self, wrangler_dir: Path, test_client: Optional['TestClient'] = None) -> None:
         self._wrangler_dir = wrangler_dir
-        self._session = session
+        self._test_client = test_client
 
     def deploy_auth(self) -> str:
         source_path, wrangler_data = self._build_source()
@@ -78,10 +79,10 @@ class DeployPreview:
         return toml.loads(api_token_path.read_text())['api_token']
 
     def _upload(self, url: str, **kwargs) -> Dict[str, Any]:
-        if isinstance(self._session, TestClient):
-            r = self._session.direct_request('POST', url, **kwargs)
+        if isinstance(self._test_client, TestClient):
+            r = self._test_client.direct_request('POST', url, **kwargs)
         else:
-            r = self._session.request('POST', url, **kwargs)
+            r = requests.post(url, **kwargs)
 
         if r.status_code not in {200, 201}:
             raise ValueError(f'unexpected response {r.status_code} when deploying to {url}:\n{r.text}')
@@ -114,9 +115,9 @@ class TestClient(Session):
         headers = headers or {}
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
 
-        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self.session_id}{1}{self.fake_host}{path}'
+        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self.session_id}{1}{self.fake_host}'
 
-        return super().request(method, self._root, headers=headers, **kwargs)
+        return super().request(method, self._root + path, headers=headers, **kwargs)
 
     def logs(self, log_count: Optional[int] = None, *, wait_time: float = 2) -> List['LogMsg']:
         return asyncio.run(self._async_logs(log_count, wait_time))
@@ -170,10 +171,11 @@ ignored_methods = {
 class LogMsg:
     def __init__(self, method: str, data):
         self.extra = data
+        # debug(data)
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
-            self.args = [parse_arg(arg) for arg in params['args']]
+            self.args = [self.parse_arg(arg) for arg in params['args']]
             self.display = ' '.join(str(arg) for arg in self.args)
             frame = params['stackTrace']['callFrames'][0]
             self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
@@ -194,6 +196,21 @@ class LogMsg:
         else:
             raise RuntimeError(f'unknown message from inspect websocket, type {method}\n{data}')
 
+    @classmethod
+    def parse_arg(cls, arg: Dict[str, Any]) -> Any:
+        arg_type = arg['type']
+        if arg_type in {'string', 'number'}:
+            return arg['value']
+        elif arg_type == 'object':
+            if 'preview' in arg:
+                return {p['name']: p['value'] for p in arg['preview']['properties']}
+            else:
+                # ???
+                return {}
+        else:
+            # TODO
+            return str(arg['preview'])
+
     def __eq__(self, other: Any) -> str:
         return other == str(self)
 
@@ -202,14 +219,3 @@ class LogMsg:
 
     def __repr__(self):
         return repr(str(self))
-
-
-def parse_arg(arg: Dict[str, Any]) -> Any:
-    arg_type = arg['type']
-    if arg_type in {'string', 'number'}:
-        return arg['value']
-    elif arg_type == 'object':
-        return {p['name']: p['value'] for p in arg['preview']['properties']}
-    else:
-        # TODO
-        return str(arg['preview'])
