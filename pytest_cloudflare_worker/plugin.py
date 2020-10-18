@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import loop_context
 
-from .main import TestClient, TestServer, deploy_preview
+from .main import TestClient, TestServer, DeployPreview
 
 __version__ = ('pytest_addoption',)
 
@@ -19,7 +19,7 @@ def _fix_preview_id(request):
     """
     wrangler_dir = Path(request.config.getoption('--wrangler-dir')).resolve()
     with loop_context(fast=True) as loop:
-        preview_id = loop.run_until_complete(deploy_preview(wrangler_dir))
+        preview_id = loop.run_until_complete(DeployPreview(wrangler_dir, loop).deploy_anon())
     return preview_id
 
 

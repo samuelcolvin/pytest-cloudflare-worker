@@ -1,57 +1,81 @@
 import json
+import os
 import subprocess
 import uuid
 from asyncio import AbstractEventLoop, CancelledError, Event, sleep as async_sleep
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiohttp
 import toml
-from aiohttp import ClientResponse, WSMessage, WSMsgType
+from aiohttp import ClientResponse, FormData, WSMessage, WSMsgType
 from aiohttp.test_utils import BaseTestServer as AiohttpTestServer, TestClient as AiohttpTestClient
 from aiohttp.web_runner import BaseRunner
 from yarl import URL
 
+__all__ = 'DeployPreview', 'TestServer', 'TestClient'
 
-async def deploy_preview(wrangler_dir: Path, *, loop: Optional[AbstractEventLoop] = None) -> str:
-    assert wrangler_dir.is_dir()
-    wrangler_path = wrangler_dir / 'wrangler.toml'
-    assert wrangler_path.is_file()
-    wrangler_data = toml.loads(wrangler_path.read_text())
-    if wrangler_data['type'] == 'javascript':
-        source_path = wrangler_dir / 'index.js'
-    else:
-        subprocess.run(('wrangler', 'build'), check=True)
-        source_path = wrangler_dir / 'dist' / 'index.js'
-    assert source_path.is_file()
 
-    # url= 'https://cloudflareworkers.com/script'
-    url = (
-        f'https://api.cloudflare.com/client/v4/'
-        f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
-    )
-    bindings = [{'name': k, 'type': 'plain_text', 'text': v} for k, v in wrangler_data.get('vars', {}).items()]
-    metadata = {
-        'body_part': source_path.name,
-        'binding': bindings
-    }
-    metadata = json.dumps(metadata)
-    data = aiohttp.FormData()
-    data.add_field('metadata', metadata.encode(), filename=source_path.name, content_type='application/json')
-    data.add_field(source_path.name, source_path.read_text(), filename=source_path.name)
+class DeployPreview:
+    def __init__(self, wrangler_dir: Path, loop: Optional[AbstractEventLoop] = None) -> None:
+        self._wrangler_dir = wrangler_dir
+        self._loop = loop
 
-    config_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
-    assert config_path.is_file(), config_path
-    api_token = toml.loads(config_path.read_text())['api_token']
-    headers = {'Authorization': f'Bearer {api_token}'}
+    async def deploy_auth(self) -> str:
+        source_path, wrangler_data = self._build_source()
 
-    async with aiohttp.ClientSession(loop=loop) as client:
-        async with client.post(url, data=data, headers=headers) as r:
-            r.raise_for_status()
-            data = await r.json()
+        url = (
+            f'https://api.cloudflare.com/client/v4/'
+            f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
+        )
+        bindings = [{'name': k, 'type': 'plain_text', 'text': v} for k, v in wrangler_data.get('vars', {}).items()]
+        metadata = {'body_part': source_path.name, 'binding': bindings}
+        metadata = json.dumps(metadata)
+        data = FormData()
+        data.add_field('metadata', metadata.encode(), filename=source_path.name, content_type='application/json')
+        data.add_field(source_path.name, source_path.read_text(), filename=source_path.name)
 
-    return data['result']['preview_id']
-    # return data['id']
+        api_token = self.get_api_token()
+        r = await self._upload(url, data, {'Authorization': f'Bearer {api_token}'})
+        return r['result']['preview_id']
+
+    async def deploy_anon(self) -> str:
+        source_path, wrangler_data = self._build_source()
+
+        r = await self._upload('https://cloudflareworkers.com/script', source_path.read_bytes())
+        return r['id']
+
+    def _build_source(self) -> Tuple[Path, Dict[str, Any]]:
+        assert self._wrangler_dir.is_dir()
+        wrangler_path = self._wrangler_dir / 'wrangler.toml'
+        assert wrangler_path.is_file()
+        wrangler_data = toml.loads(wrangler_path.read_text())
+        if wrangler_data['type'] == 'javascript':
+            source_path = self._wrangler_dir / 'index.js'
+        else:
+            subprocess.run(('wrangler', 'build'), check=True)
+            source_path = self._wrangler_dir / 'dist' / 'index.js'
+        assert source_path.is_file(), f'source path "{source_path}" not found'
+        return source_path, wrangler_data
+
+    @classmethod
+    def get_api_token(cls) -> str:
+        if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
+            return api_token
+
+        if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
+            api_token_path = Path(path).expanduser()
+        else:
+            api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
+
+        assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
+        return toml.loads(api_token_path.read_text())['api_token']
+
+    async def _upload(self, url: str, data: Union[bytes, FormData], headers: Dict[str, str] = None) -> Dict[str, Any]:
+        async with aiohttp.ClientSession(loop=self._loop) as client:
+            async with client.post(url, data=data, headers=headers) as r:
+                r.raise_for_status()
+                return await r.json()
 
 
 class TestServer(AiohttpTestServer):

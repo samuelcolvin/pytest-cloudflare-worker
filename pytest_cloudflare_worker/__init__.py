@@ -1,5 +1,5 @@
-from .main import TestClient, TestServer, deploy_preview
+from .main import TestClient, TestServer, DeployPreview
 from .version import VERSION
 
 __version__ = VERSION
-__all__ = (VERSION, 'TestClient', 'TestServer', 'deploy_preview')
+__all__ = VERSION, 'TestClient', 'TestServer', 'DeployPreview'
