@@ -4,6 +4,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -98,11 +99,19 @@ class TestClient(Session):
         self.fake_host = self._original_fake_host
         self.preview_id = preview_id
         self._root = 'https://0000000000000000.cloudflareworkers.com'
-        self.session_id = uuid.uuid4().hex
-        self.headers = {'User-Agent': f'pytest-cloudflare-worker/{VERSION}'}
+        self._session_id = uuid.uuid4().hex
+        self.headers = {'user-agent': f'pytest-cloudflare-worker/{VERSION}'}
+        self.inspect_logs = []
+
+        self.inspect_enabled = True
+        self._inspect_ready = Event()
+        self._inspect_stop = Event()
+        self._inspect_thread: Optional[Thread] = None
 
     def new_cf_session(self):
-        self.session_id = uuid.uuid4().hex
+        self._stop_inspect()
+        self.inspect_logs = []
+        self._session_id = uuid.uuid4().hex
         self.fake_host = self._original_fake_host
 
     def direct_request(self, method: str, url: str, **kwargs) -> Response:
@@ -112,23 +121,43 @@ class TestClient(Session):
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
+        if self.inspect_enabled and self._inspect_thread is None:
+            self._start_inspect()
+        self._inspect_ready.wait(2)
+
         headers = headers or {}
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
 
-        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self.session_id}{1}{self.fake_host}'
+        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self._session_id}{1}{self.fake_host}'
 
         return super().request(method, self._root + path, headers=headers, **kwargs)
 
-    def logs(self, log_count: Optional[int] = None, *, wait_time: float = 2) -> List['LogMsg']:
-        return asyncio.run(self._async_logs(log_count, wait_time))
+    # def logs(self, log_count: Optional[int] = None, *, wait_time: float = 2) -> List['LogMsg']:
+    #     return asyncio.run(self._async_logs(log_count, wait_time))
 
-    async def _async_logs(self, log_count: Optional[int], wait_time: float) -> List['LogMsg']:
-        log: List[LogMsg] = []
-        loop = asyncio.get_running_loop()
-        start = loop.time()
-        async with websockets.connect(f'wss://cloudflareworkers.com/inspect/{self.session_id}') as ws:
+    def _start_inspect(self):
+        self._inspect_ready.clear()
+        self._inspect_stop.clear()
+        kwargs = dict(
+            session_id=self._session_id, log=self.inspect_logs, ready=self._inspect_ready, stop=self._inspect_stop
+        )
+        self._inspect_thread = Thread(name='inspect', target=inspect, kwargs=kwargs, daemon=True)
+        self._inspect_thread.start()
+
+    def _stop_inspect(self):
+        if self._inspect_thread:
+            self._inspect_stop.set()
+            self._inspect_thread.join(1)
+
+
+def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
+    async def _watch() -> None:
+        async with websockets.connect(f'wss://cloudflareworkers.com/inspect/{session_id}') as ws:
             for msg in inspect_start_msgs:
                 await ws.send(msg)
+
+            ready.set()
+
             while True:
                 f = ws.recv()
                 try:
@@ -139,11 +168,12 @@ class TestClient(Session):
                     log_msg = LogMsg.from_raw(msg)
                     if log_msg:
                         log.append(log_msg)
-                    if log_count and len(log) >= log_count:
-                        return log
+                        print(log)
 
-                if loop.time() - start > wait_time:
-                    return log
+                if stop.is_set():
+                    return
+
+    asyncio.run(_watch())
 
 
 # we don't need all of these, but not clear which we do

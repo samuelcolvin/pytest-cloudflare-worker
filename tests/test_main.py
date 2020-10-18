@@ -33,6 +33,9 @@ def test_anon_client(wrangler_dir: Path):
         assert headers['user-agent'].startswith('pytest-cloudflare-worker')
         # logs = client.logs(1)
         # assert logs == ['LOG worker.js:5: handling request: GET /the/path/']
+        import time
+
+        time.sleep(2)
 
 
 @auth_test
