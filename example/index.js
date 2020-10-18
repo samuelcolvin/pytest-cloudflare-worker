@@ -18,6 +18,12 @@ async function handle(request) {
 
   if (path === 'vars') {
     data['vars'] = {FOO, SPAM}
+  } else if (path === 'kv') {
+    const key = url.searchParams.get('key') || 'the-key'
+    const value = url.searchParams.get('value') || 'the-value'
+    console.log('settings KV', {[key]: value})
+    await THINGS.put(key, value, {expirationTtl: 3600})
+    data['KV'] = {[key]: await THINGS.get(key)}
   }
 
   const headers = { 'x-foo': 'bar', 'content-type': 'application/json' }

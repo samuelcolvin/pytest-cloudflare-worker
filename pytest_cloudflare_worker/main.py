@@ -28,11 +28,17 @@ class DeployPreview:
             f'https://api.cloudflare.com/client/v4/'
             f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
         )
-        bindings = [{'name': k, 'type': 'plain_text', 'text': v} for k, v in wrangler_data.get('vars', {}).items()]
-        metadata = {'body_part': source_path.name, 'binding': bindings}
-        metadata = json.dumps(metadata)
+
+        bindings: List[Dict[str, str]] = []
+        for k, v in wrangler_data.get('vars', {}).items():
+            bindings.append({'name': k, 'type': 'plain_text', 'text': v})
+        for namespace in wrangler_data.get('kv_namespaces', []):
+            if preview_id := namespace.get('preview_id'):
+                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+        metadata = json.dumps({'body_part': source_path.name, 'binding': bindings})
+
         data = FormData()
-        data.add_field('metadata', metadata.encode(), filename=source_path.name, content_type='application/json')
+        data.add_field('metadata', metadata, filename=source_path.name, content_type='application/json')
         data.add_field(source_path.name, source_path.read_text(), filename=source_path.name)
 
         api_token = self.get_api_token()
@@ -203,13 +209,8 @@ class LogMsg:
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
-            str_args = []
-            for arg in params['args']:
-                if arg['type'] in {'string', 'number'}:
-                    str_args.append(arg['value'])
-                else:
-                    str_args.append(str(arg['preview']))
-            self.display = ' '.join(str_args)
+            self.args = [parse_arg(arg) for arg in params['args']]
+            self.display = ' '.join(str(arg) for arg in self.args)
             frame = params['stackTrace']['callFrames'][0]
             self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
         elif method == 'Runtime.exceptionThrown':
@@ -240,3 +241,14 @@ class LogMsg:
 
     def __repr__(self):
         return repr(str(self))
+
+
+def parse_arg(arg: Dict[str, Any]) -> Any:
+    arg_type = arg['type']
+    if arg_type in {'string', 'number'}:
+        return arg['value']
+    elif arg_type == 'object':
+        return {p['name']: p['value'] for p in arg['preview']['properties']}
+    else:
+        # TODO
+        return str(arg['preview'])

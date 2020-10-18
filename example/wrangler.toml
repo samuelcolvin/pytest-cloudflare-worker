@@ -5,9 +5,9 @@ workers_dev = true
 route = ""
 zone_id = ""
 
-#kv_namespaces = [
-#    { binding = "PACKAGES", id = "f3480b52baca4224a9c46e7296293376", preview_id = "32162418db734f5a8d33f234ba160102" }
-#]
+kv_namespaces = [
+    { binding = "THINGS", id = "06b3ff5d577d4fb29ddd8f209bed31a6", preview_id = "06b957fd6edd4b588e944f85192ff28b" }
+]
 
 [vars]
 FOO = 'bar'
