@@ -202,7 +202,6 @@ def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event, 
                     pass
                 else:
                     data = json.loads(msg)
-                    debug(data)
                     if data.get('id') == 8:  # this is the id of the last element of inspect_start_msgs
                         ready.set()
 
@@ -241,7 +240,7 @@ ignored_methods = {
 
 class LogMsg:
     def __init__(self, method: str, data):
-        print(data)
+        # debug(data)
         self.full = data
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
