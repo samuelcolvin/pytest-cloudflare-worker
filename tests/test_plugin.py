@@ -62,5 +62,5 @@ def test_client_console(client: TestClient):
     r = client.get('/console')
     assert r.status_code == 200
     log = client.inspect_log_wait(4)
-    debug(log)
+    print(log)
     # assert log == ['LOG worker.js:5> "handling request:", "PUT", "/foo/bar"']
