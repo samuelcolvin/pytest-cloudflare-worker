@@ -9,10 +9,11 @@ __version__ = ('pytest_addoption',)
 
 
 def pytest_addoption(parser):
-    parser.addoption('--wrangler-dir', action='store', default='.', help='directory in which to find wrangler.toml')
+    parser.addoption('--cf-wrangler-dir', action='store', default='.', help='directory in which to find wrangler.toml')
     parser.addoption(
-        '--anon-client',
+        '--cf-anon-client',
         action='store_true',
+
         default=False,
         help=(
             "whether the anonymous cloudflare worker preview endpoint, if set "  # noqa: Q000
@@ -26,8 +27,8 @@ def _fix_preview_id(request):
     """
     Deploy the preview and return the preview id.
     """
-    wrangler_dir = Path(request.config.getoption('--wrangler-dir')).resolve()
-    anon_client: bool = request.config.getoption('--anon-client')
+    wrangler_dir = Path(request.config.getoption('--cf-wrangler-dir')).resolve()
+    anon_client: bool = request.config.getoption('--cf-anon-client')
     with loop_context(fast=True) as loop:
         deployer = DeployPreview(wrangler_dir, loop)
         if anon_client:
