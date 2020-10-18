@@ -90,3 +90,14 @@ def test_non_api_token(wrangler_dir: Path):
     finally:
         if env_api_token:
             os.environ['CLOUDFLARE_API_TOKEN'] = env_api_token
+
+
+def test_bad_upload(wrangler_dir: Path):
+    env_api_token = os.environ.pop('CLOUDFLARE_API_TOKEN', None)
+    os.environ['CLOUDFLARE_API_TOKEN'] = 'foobar'
+    try:
+        with pytest.raises(ValueError, match='unexpected response 400 when deploying to https://api.cloudflare.com'):
+            DeployPreview(wrangler_dir).deploy_auth()
+    finally:
+        if env_api_token:
+            os.environ['CLOUDFLARE_API_TOKEN'] = env_api_token

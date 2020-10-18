@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import uuid
+import warnings
 from pathlib import Path
 from threading import Event, Thread
 from time import time
@@ -129,9 +130,10 @@ class TestClient(Session):
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
-        if self.inspect_enabled and self._inspect_thread is None:
-            self._start_inspect()
-        self._inspect_ready.wait(2)
+        if self.inspect_enabled:
+            if self._inspect_thread is None:
+                self._start_inspect()
+            self._inspect_ready.wait(2)
 
         headers = headers or {}
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
@@ -142,7 +144,7 @@ class TestClient(Session):
         response = super().request(method, self._root + path, headers=headers, **kwargs)
         if response.status_code >= 500:
             error_logs = []
-            for i in range(100):
+            for i in range(100):  # pragma: no branch
                 error_logs = [msg for msg in self.inspect_logs[logs_before:] if msg.level == 'ERROR']
                 if error_logs:
                     break
@@ -150,16 +152,14 @@ class TestClient(Session):
             raise WorkerError(error_logs)
         return response
 
-    def inspect_log_errors(self) -> List['LogMsg']:
-        return [msg for msg in self.inspect_logs if msg.level == 'ERROR']
-
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
+        assert self.inspect_enabled, 'inspect_log_wait make no sense without inspect_enabled=True'
         start = time()
         while True:
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
-                raise TimeoutError(f'only {len(self.inspect_logs)} logs receives, fewer than {count} expected')
+                raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
             self._wait_for_log()
 
     def _wait_for_log(self) -> None:
@@ -274,20 +274,45 @@ class LogMsg:
     @classmethod
     def parse_arg(cls, arg: Dict[str, Any]) -> Any:
         arg_type = arg['type']
-        if arg_type in {'string', 'number'}:
-            return arg['value']
-        elif arg_type == 'object':
-            if 'preview' in arg:
-                return {p['name']: p['value'] for p in arg['preview']['properties']}
-            else:
-                # ???
-                return {}
-        else:
-            # TODO
-            return str(arg['preview'])
+        value = arg.get('value')
+        if arg_type == 'string':
+            return value
+        if arg_type == 'number':
+            return float(value)
+        elif arg_type == 'boolean':
+            return value == 'true'
+        elif value == 'null':
+            return None
+        elif value == 'undefined':
+            # no good python equivalent
+            return '<undefined>'
 
-    def __eq__(self, other: Any) -> str:
-        return other == str(self)
+        sub_type = arg.get('subtype')
+        preview = arg.get('preview')
+        if (arg_type, sub_type) == ('object', 'array'):
+            return [cls.parse_arg(item) for item in preview['properties']]
+        elif (arg_type, sub_type) == ('object', 'date'):
+            return arg['description']
+        elif arg_type == 'object' and arg.get('className') == 'Object':
+            return {p['name']: cls.parse_arg(p) for p in preview['properties']}
+
+        warnings.warn(f'unknown inspect log argument {arg}')
+        return str(arg)
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return other == str(self)
+        elif isinstance(other, dict):
+            self_dict = {k: self.__dict__[k] for k in other.keys()}
+            return other == self_dict
+        else:
+            return False
+
+    def endswith(self, *s: str) -> bool:
+        return str(self).endswith(*s)
+
+    def startswith(self, *s: str) -> bool:
+        return str(self).startswith(*s)
 
     def __str__(self):
         return f'{self.level} {self.file}:{self.line}> {self.message}'

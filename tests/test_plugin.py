@@ -55,3 +55,29 @@ def test_worker_error(client: TestClient):
     """
     with pytest.raises(WorkerError, match='worker.js:19> ReferenceError: FOO is not defined'):
         client.get('/vars/')
+
+
+def test_client_console(client: TestClient):
+    r = client.get('/console')
+    assert r.status_code == 200
+    logs = client.inspect_log_wait(4)
+    # debug(log)
+    assert logs == [
+        'LOG worker.js:5> "handling request:", "GET", "/console"',
+        'LOG worker.js:28> "object", {"foo": "bar", "spam": 1.0}',
+        'LOG worker.js:29> "list", ["s", 1.0, 2.0, true, false, null, "<undefined>"]',
+        {'level': 'LOG', 'file': 'worker.js', 'line': 31},
+    ]
+    assert logs[2].message == '"list", ["s", 1.0, 2.0, true, false, null, "<undefined>"]'
+    assert logs[2].args == ['list', ['s', 1, 2, True, False, None, '<undefined>']]
+    assert logs[3].endswith('(Coordinated Universal Time)"')
+    with pytest.raises(TimeoutError, match='4 logs received, expected 10'):
+        client.inspect_log_wait(10, wait_time=0)
+
+
+def test_inspect_disabled(client: TestClient):
+    client.inspect_enabled = False
+    r = client.get('/console')
+    assert r.status_code == 200
+
+    assert len(client.inspect_logs) == 0
