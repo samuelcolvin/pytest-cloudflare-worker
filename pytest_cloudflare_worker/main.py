@@ -1,27 +1,29 @@
+import asyncio
 import json
 import os
 import subprocess
 import uuid
-from asyncio import AbstractEventLoop, CancelledError, Event, sleep as async_sleep
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from threading import Event, Thread
+from time import time
+from typing import Any, Dict, List, Optional, Tuple
 
-import aiohttp
+import requests
 import toml
-from aiohttp import ClientResponse, FormData, WSMessage, WSMsgType
-from aiohttp.test_utils import BaseTestServer as AiohttpTestServer, TestClient as AiohttpTestClient
-from aiohttp.web_runner import BaseRunner
-from yarl import URL
+import websockets
+from requests import Response, Session
 
-__all__ = 'DeployPreview', 'TestServer', 'TestClient'
+from .version import VERSION
+
+__all__ = 'DeployPreview', 'TestClient', 'WorkerError'
 
 
 class DeployPreview:
-    def __init__(self, wrangler_dir: Path, loop: Optional[AbstractEventLoop] = None) -> None:
+    def __init__(self, wrangler_dir: Path, test_client: Optional['TestClient'] = None) -> None:
         self._wrangler_dir = wrangler_dir
-        self._loop = loop
+        self._test_client = test_client
 
-    async def deploy_auth(self) -> str:
+    def deploy_auth(self) -> str:
         source_path, wrangler_data = self._build_source()
 
         url = (
@@ -37,18 +39,19 @@ class DeployPreview:
                 bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
         metadata = json.dumps({'body_part': source_path.name, 'binding': bindings})
 
-        data = FormData()
-        data.add_field('metadata', metadata, filename=source_path.name, content_type='application/json')
-        data.add_field(source_path.name, source_path.read_text(), filename=source_path.name)
+        files = {
+            'metadata': ('metadata.json', metadata, 'application/json'),
+            source_path.name: (source_path.name, source_path.read_text(), 'text/plain'),
+        }
 
         api_token = self.get_api_token()
-        r = await self._upload(url, data, {'Authorization': f'Bearer {api_token}'})
+        r = self._upload(url, files=files, headers={'Authorization': f'Bearer {api_token}'})
         return r['result']['preview_id']
 
-    async def deploy_anon(self) -> str:
+    def deploy_anon(self) -> str:
         source_path, wrangler_data = self._build_source()
 
-        r = await self._upload('https://cloudflareworkers.com/script', source_path.read_bytes())
+        r = self._upload('https://cloudflareworkers.com/script', data=source_path.read_bytes())
         return r['id']
 
     def _build_source(self) -> Tuple[Path, Dict[str, Any]]:
@@ -74,39 +77,146 @@ class DeployPreview:
         else:
             api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
 
-        assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
+        # assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
         return toml.loads(api_token_path.read_text())['api_token']
 
-    async def _upload(self, url: str, data: Union[bytes, FormData], headers: Dict[str, str] = None) -> Dict[str, Any]:
-        async with aiohttp.ClientSession(loop=self._loop) as client:
-            async with client.post(url, data=data, headers=headers) as r:
-                r.raise_for_status()
-                return await r.json()
+    def _upload(self, url: str, **kwargs) -> Dict[str, Any]:
+        if isinstance(self._test_client, TestClient):
+            r = self._test_client.direct_request('POST', url, **kwargs)
+        else:
+            r = requests.post(url, **kwargs)
+
+        if r.status_code not in {200, 201}:
+            raise ValueError(f'unexpected response {r.status_code} when deploying to {url}:\n{r.text}')
+        return r.json()
 
 
-class TestServer(AiohttpTestServer):
-    root: URL
+class WorkerError(Exception):
+    def __init__(self, logs: List['LogMsg']):
+        super().__init__('\n'.join(str(msg) for msg in logs))
+        self.logs = logs
 
-    def __init__(self, preview_id: str, loop: Optional[AbstractEventLoop] = None):
-        super().__init__(loop=loop)
-        self.preview_id: str = preview_id
-        self.host = '0000000000000000.cloudflareworkers.com'
-        self.port = 443
-        self.scheme = 'https'
-        self.root = self._root = URL(f'{self.scheme}://{self.host}')
 
-    async def start_server(self, loop: Optional[AbstractEventLoop] = None, **kwargs: Any) -> None:
-        return None
+class TestClient(Session):
+    __test__ = False
 
-    async def _make_runner(self, **kwargs: Any) -> BaseRunner:
-        pass
+    def __init__(self, *, preview_id: Optional[str] = None, fake_host: str = 'example.com'):
+        super().__init__()
+        self._original_fake_host = fake_host
+        self.fake_host = self._original_fake_host
+        self.preview_id = preview_id
+        self._root = 'https://0000000000000000.cloudflareworkers.com'
+        self._session_id = uuid.uuid4().hex
+        self.headers = {'user-agent': f'pytest-cloudflare-worker/{VERSION}'}
+        self.inspect_logs = []
 
-    def make_url(self, path: str) -> URL:
-        assert self._root is not None
-        return self._root
+        self.inspect_enabled = True
+        self._inspect_ready = Event()
+        self._inspect_stop = Event()
+        self._inspect_received = Event()
+        self._inspect_thread: Optional[Thread] = None
 
-    async def close(self) -> None:
-        pass
+    def new_cf_session(self):
+        self._stop_inspect()
+        self.inspect_logs = []
+        self._session_id = uuid.uuid4().hex
+        self.fake_host = self._original_fake_host
+
+    def direct_request(self, method: str, url: str, **kwargs) -> Response:
+        return super().request(method, url, **kwargs)
+
+    def request(self, method: str, path: str, *, headers: Dict[str, str] = None, **kwargs: Any) -> Response:
+        assert self.preview_id, 'preview_id not set in test client'
+        assert path.startswith('/'), f'path "{path}" must be relative'
+
+        if self.inspect_enabled and self._inspect_thread is None:
+            self._start_inspect()
+        self._inspect_ready.wait(2)
+
+        headers = headers or {}
+        assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
+
+        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self._session_id}{1}{self.fake_host}'
+
+        logs_before = len(self.inspect_logs)
+        response = super().request(method, self._root + path, headers=headers, **kwargs)
+        if response.status_code >= 500:
+            error_logs = []
+            for i in range(100):
+                error_logs = [msg for msg in self.inspect_logs[logs_before:] if msg.level == 'ERROR']
+                if error_logs:
+                    break
+                self._wait_for_log()
+            raise WorkerError(error_logs)
+        return response
+
+    def inspect_log_errors(self) -> List['LogMsg']:
+        return [msg for msg in self.inspect_logs if msg.level == 'ERROR']
+
+    def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
+        start = time()
+        while True:
+            if count is not None and len(self.inspect_logs) >= count:
+                return self.inspect_logs
+            elif time() - start > wait_time:
+                raise TimeoutError(f'only {len(self.inspect_logs)} logs receives, fewer than {count} expected')
+            self._wait_for_log()
+
+    def _wait_for_log(self) -> None:
+        self._inspect_received.wait(0.1)
+        self._inspect_received.clear()
+
+    def _start_inspect(self):
+        self._inspect_ready.clear()
+        self._inspect_stop.clear()
+        kwargs = dict(
+            session_id=self._session_id,
+            log=self.inspect_logs,
+            ready=self._inspect_ready,
+            stop=self._inspect_stop,
+            received=self._inspect_received,
+        )
+        self._inspect_thread = Thread(name='inspect', target=inspect, kwargs=kwargs, daemon=True)
+        self._inspect_thread.start()
+
+    def _stop_inspect(self):
+        if self._inspect_thread is not None:
+            self._inspect_stop.set()
+            t = self._inspect_thread
+            self._inspect_thread = None
+            t.join(1)
+
+    def close(self) -> None:
+        super().close()
+        self._stop_inspect()
+
+
+def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event, received: Event):
+    async def async_inspect() -> None:
+        async with websockets.connect(f'wss://cloudflareworkers.com/inspect/{session_id}') as ws:
+            for msg in inspect_start_msgs:
+                await ws.send(msg)
+
+            while True:
+                f = ws.recv()
+                try:
+                    msg = await asyncio.wait_for(f, timeout=0.1)
+                except asyncio.TimeoutError:
+                    pass
+                else:
+                    data = json.loads(msg)
+                    if data.get('id') == 8:  # this is the id of the last element of inspect_start_msgs
+                        ready.set()
+
+                    log_msg = LogMsg.from_raw(data)
+                    if log_msg:
+                        log.append(log_msg)
+                        received.set()
+
+                if stop.is_set():
+                    return
+
+    asyncio.run(async_inspect())
 
 
 # we don't need all of these, but not clear which we do
@@ -122,78 +232,6 @@ inspect_start_msgs = [
     json.dumps({'id': 8, 'method': 'Runtime.getIsolateId'}),
 ]
 
-
-class TestClient(AiohttpTestClient):
-    """
-    A test client implementation.
-
-    To write functional tests for aiohttp based servers.
-    """
-
-    def __init__(self, server: TestServer, fake_host: str = 'example.com', **kwargs):
-        super().__init__(server, **kwargs)
-        self.fake_host = fake_host
-        self._log: List[LogMsg] = []
-        self.session_id = uuid.uuid4().hex
-        self.watch_task = None
-
-    async def start_server(self) -> None:
-        ready = Event()
-        self.watch_task = self._loop.create_task(self._watch(ready))
-        await ready.wait()
-        await super().start_server()
-
-    async def close(self) -> None:
-        self.watch_task.cancel()
-        await self.watch_task
-        await super().close()
-
-    async def _request(
-        self, method: str, path: str, *, headers: Dict[str, str] = None, **kwargs: Any
-    ) -> ClientResponse:
-        url = URL(path)
-        assert not url.is_absolute(), f'path "{url}" must be relative'
-
-        headers = headers or {}
-        assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
-
-        server: TestServer = self._server
-        headers['Cookie'] = f'__ew_fiddle_preview={server.preview_id}{self.session_id}{1}{self.fake_host}{path}'
-
-        return await super()._request(method, path, headers=headers, **kwargs)
-
-    async def logs(self, *, log_count: int = 0, sleep: float = None) -> List['LogMsg']:
-        if sleep is not None:
-            await async_sleep(sleep)
-            return self._log
-        for _ in range(200):
-            if len(self._log) >= log_count:
-                return self._log
-            await async_sleep(0.01)
-
-        if log_count == 0:
-            msg = 'no logs received'
-        elif log_count == 1:
-            msg = '1 log not received'
-        else:
-            msg = f'{log_count} logs not received'
-        raise RuntimeError(msg)
-
-    async def _watch(self, ready_event: Event):
-        try:
-            async with self.session.ws_connect(f'wss://cloudflareworkers.com/inspect/{self.session_id}') as ws:
-                for msg in inspect_start_msgs:
-                    await ws.send_str(msg)
-                ready_event.set()
-                async for msg in ws:
-                    log_msg = LogMsg.from_raw(msg)
-                    if log_msg:
-                        self._log.append(log_msg)
-        except CancelledError:
-            # happens when the task is cancelled
-            pass
-
-
 ignored_methods = {
     'Runtime.executionContextCreated',
     'Runtime.executionContextDestroyed',
@@ -205,25 +243,25 @@ ignored_methods = {
 
 class LogMsg:
     def __init__(self, method: str, data):
-        self.extra = data
+        # debug(data)
+        self.full = data
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
-            self.args = [parse_arg(arg) for arg in params['args']]
-            self.display = ' '.join(str(arg) for arg in self.args)
+            self.args = [self.parse_arg(arg) for arg in params['args']]
+            self.message = ', '.join(json.dumps(arg) for arg in self.args)
             frame = params['stackTrace']['callFrames'][0]
-            self.line = f"{frame['url']}:{frame['lineNumber'] + 1}"
+            self.file = frame['url']
+            self.line = frame['lineNumber'] + 1
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
-            self.display = params['exceptionDetails']['exception']['preview']['description']
-            self.line = ''  # TODO
+            details = params['exceptionDetails']
+            self.message = details['exception']['preview']['description']
+            self.file = details['url']
+            self.line = details['lineNumber'] + 1
 
     @classmethod
-    def from_raw(cls, msg: WSMessage) -> Optional['LogMsg']:
-        if msg.type != WSMsgType.TEXT:
-            return
-
-        data = json.loads(msg.data)
+    def from_raw(cls, data: Dict[str, Any]) -> Optional['LogMsg']:
         method = data.get('method')
         if not method or method in ignored_methods:
             return
@@ -233,22 +271,26 @@ class LogMsg:
         else:
             raise RuntimeError(f'unknown message from inspect websocket, type {method}\n{data}')
 
+    @classmethod
+    def parse_arg(cls, arg: Dict[str, Any]) -> Any:
+        arg_type = arg['type']
+        if arg_type in {'string', 'number'}:
+            return arg['value']
+        elif arg_type == 'object':
+            if 'preview' in arg:
+                return {p['name']: p['value'] for p in arg['preview']['properties']}
+            else:
+                # ???
+                return {}
+        else:
+            # TODO
+            return str(arg['preview'])
+
     def __eq__(self, other: Any) -> str:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level} {self.line}: {self.display}'
+        return f'{self.level} {self.file}:{self.line}> {self.message}'
 
     def __repr__(self):
         return repr(str(self))
-
-
-def parse_arg(arg: Dict[str, Any]) -> Any:
-    arg_type = arg['type']
-    if arg_type in {'string', 'number'}:
-        return arg['value']
-    elif arg_type == 'object':
-        return {p['name']: p['value'] for p in arg['preview']['properties']}
-    else:
-        # TODO
-        return str(arg['preview'])

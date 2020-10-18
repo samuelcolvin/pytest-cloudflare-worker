@@ -47,9 +47,9 @@ setup(
     python_requires='>=3.8',
     zip_safe=True,
     install_requires=[
-        'aiohttp>=3.6.2',
+        'requests>=2.24.0',
+        'websockets>=8.1',
         'pytest>=6.0.0',
-        'pytest-aiohttp>=0.3.0',
         'toml>=0.10.1',
     ],
 )
