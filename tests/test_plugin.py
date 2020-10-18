@@ -32,3 +32,16 @@ def test_client_post(client: TestClient):
     assert r.headers['x-foo'] == 'bar'
     log = client.inspect_log_wait(1)
     assert log == ['LOG worker.js:5> "handling request:", "PUT", "/foo/bar"']
+
+
+def test_client_request(client: TestClient):
+    assert client.get('/1').status_code == 200
+    assert client.get('/2').status_code == 200
+    assert client.get('/3').status_code == 200
+    log = client.inspect_log_wait(3)
+    debug(log)
+    assert log == [
+        'LOG worker.js:5> "handling request:", "GET", "/1"',
+        'LOG worker.js:5> "handling request:", "GET", "/2"',
+        'LOG worker.js:5> "handling request:", "GET", "/3"',
+    ]

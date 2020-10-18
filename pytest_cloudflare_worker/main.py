@@ -122,6 +122,7 @@ class TestClient(Session):
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
+        # debug(self._inspect_thread)
         if self.inspect_enabled and self._inspect_thread is None:
             self._start_inspect()
         self._inspect_ready.wait(2)
@@ -130,12 +131,14 @@ class TestClient(Session):
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
 
         headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self._session_id}{1}{self.fake_host}'
+        # debug(request=self._session_id)
 
         return super().request(method, self._root + path, headers=headers, **kwargs)
 
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
         start = time()
         while True:
+            # debug(count, self._session_id, self.inspect_logs)
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
@@ -164,12 +167,10 @@ class TestClient(Session):
 
 
 def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
-    async def _watch() -> None:
+    async def async_inspect() -> None:
         async with websockets.connect(f'wss://cloudflareworkers.com/inspect/{session_id}') as ws:
             for msg in inspect_start_msgs:
                 await ws.send(msg)
-
-            ready.set()
 
             while True:
                 f = ws.recv()
@@ -178,14 +179,18 @@ def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
                 except asyncio.TimeoutError:
                     pass
                 else:
-                    log_msg = LogMsg.from_raw(msg)
+                    data = json.loads(msg)
+                    if data.get('id') == 8:  # this is the id of the last element of inspect_start_msgs
+                        ready.set()
+
+                    log_msg = LogMsg.from_raw(data)
                     if log_msg:
                         log.append(log_msg)
 
                 if stop.is_set():
                     return
 
-    asyncio.run(_watch())
+    asyncio.run(async_inspect())
 
 
 # we don't need all of these, but not clear which we do
@@ -229,8 +234,7 @@ class LogMsg:
             self.line = '-'
 
     @classmethod
-    def from_raw(cls, msg: str) -> Optional['LogMsg']:
-        data = json.loads(msg)
+    def from_raw(cls, data: Dict[str, Any]) -> Optional['LogMsg']:
         method = data.get('method')
         if not method or method in ignored_methods:
             return
