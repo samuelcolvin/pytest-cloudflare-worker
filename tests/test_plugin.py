@@ -1,4 +1,6 @@
-from pytest_cloudflare_worker import TestClient
+import pytest
+
+from pytest_cloudflare_worker import TestClient, WorkerError
 
 
 def test_client_get(client: TestClient):
@@ -45,3 +47,11 @@ def test_client_request(client: TestClient):
         'LOG worker.js:5> "handling request:", "GET", "/2"',
         'LOG worker.js:5> "handling request:", "GET", "/3"',
     ]
+
+
+def test_worker_error(client: TestClient):
+    """
+    Use the fact that anon clients don't have access to vars to cause a 500 error
+    """
+    with pytest.raises(WorkerError, match='worker.js:19> ReferenceError: FOO is not defined'):
+        client.get('/vars/')

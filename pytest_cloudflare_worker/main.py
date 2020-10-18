@@ -5,7 +5,7 @@ import subprocess
 import uuid
 from pathlib import Path
 from threading import Event, Thread
-from time import sleep, time
+from time import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -15,7 +15,7 @@ from requests import Response, Session
 
 from .version import VERSION
 
-__all__ = 'DeployPreview', 'TestClient'
+__all__ = 'DeployPreview', 'TestClient', 'WorkerError'
 
 
 class DeployPreview:
@@ -91,6 +91,12 @@ class DeployPreview:
         return r.json()
 
 
+class WorkerError(Exception):
+    def __init__(self, logs: List['LogMsg']):
+        super().__init__('\n'.join(str(msg) for msg in logs))
+        self.logs = logs
+
+
 class TestClient(Session):
     __test__ = False
 
@@ -107,6 +113,7 @@ class TestClient(Session):
         self.inspect_enabled = True
         self._inspect_ready = Event()
         self._inspect_stop = Event()
+        self._inspect_received = Event()
         self._inspect_thread: Optional[Thread] = None
 
     def new_cf_session(self):
@@ -122,7 +129,6 @@ class TestClient(Session):
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
-        # debug(self._inspect_thread)
         if self.inspect_enabled and self._inspect_thread is None:
             self._start_inspect()
         self._inspect_ready.wait(2)
@@ -131,9 +137,21 @@ class TestClient(Session):
         assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
 
         headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self._session_id}{1}{self.fake_host}'
-        # debug(request=self._session_id)
 
-        return super().request(method, self._root + path, headers=headers, **kwargs)
+        logs_before = len(self.inspect_logs)
+        response = super().request(method, self._root + path, headers=headers, **kwargs)
+        if response.status_code >= 500:
+            error_logs = []
+            for i in range(100):
+                error_logs = [msg for msg in self.inspect_logs[logs_before:] if msg.level == 'ERROR']
+                if error_logs:
+                    break
+                self._wait_for_log()
+            raise WorkerError(error_logs)
+        return response
+
+    def inspect_log_errors(self) -> List['LogMsg']:
+        return [msg for msg in self.inspect_logs if msg.level == 'ERROR']
 
     def inspect_log_wait(self, count: Optional[int] = None, wait_time: float = 5) -> List['LogMsg']:
         start = time()
@@ -142,13 +160,21 @@ class TestClient(Session):
                 return self.inspect_logs
             elif time() - start > wait_time:
                 raise TimeoutError(f'only {len(self.inspect_logs)} logs receives, fewer than {count} expected')
-            sleep(0.1)
+            self._wait_for_log()
+
+    def _wait_for_log(self) -> None:
+        self._inspect_received.wait(0.1)
+        self._inspect_received.clear()
 
     def _start_inspect(self):
         self._inspect_ready.clear()
         self._inspect_stop.clear()
         kwargs = dict(
-            session_id=self._session_id, log=self.inspect_logs, ready=self._inspect_ready, stop=self._inspect_stop
+            session_id=self._session_id,
+            log=self.inspect_logs,
+            ready=self._inspect_ready,
+            stop=self._inspect_stop,
+            received=self._inspect_received,
         )
         self._inspect_thread = Thread(name='inspect', target=inspect, kwargs=kwargs, daemon=True)
         self._inspect_thread.start()
@@ -165,7 +191,7 @@ class TestClient(Session):
         self._stop_inspect()
 
 
-def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
+def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event, received: Event):
     async def async_inspect() -> None:
         async with websockets.connect(f'wss://cloudflareworkers.com/inspect/{session_id}') as ws:
             for msg in inspect_start_msgs:
@@ -185,6 +211,7 @@ def inspect(*, session_id: str, log: List['LogMsg'], ready: Event, stop: Event):
                     log_msg = LogMsg.from_raw(data)
                     if log_msg:
                         log.append(log_msg)
+                        received.set()
 
                 if stop.is_set():
                     return
@@ -216,21 +243,22 @@ ignored_methods = {
 
 class LogMsg:
     def __init__(self, method: str, data):
-        self.extra = data
         # debug(data)
+        self.full = data
         params = data['params']
         if method == 'Runtime.consoleAPICalled':
             self.level = params['type'].upper()
             self.args = [self.parse_arg(arg) for arg in params['args']]
-            self.display = ', '.join(json.dumps(arg) for arg in self.args)
+            self.message = ', '.join(json.dumps(arg) for arg in self.args)
             frame = params['stackTrace']['callFrames'][0]
             self.file = frame['url']
             self.line = frame['lineNumber'] + 1
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
-            self.display = params['exceptionDetails']['exception']['preview']['description']
-            self.file = '-'
-            self.line = '-'
+            details = params['exceptionDetails']
+            self.message = details['exception']['preview']['description']
+            self.file = details['url']
+            self.line = details['lineNumber'] + 1
 
     @classmethod
     def from_raw(cls, data: Dict[str, Any]) -> Optional['LogMsg']:
@@ -262,7 +290,7 @@ class LogMsg:
         return other == str(self)
 
     def __str__(self):
-        return f'{self.level} {self.file}:{self.line}> {self.display}'
+        return f'{self.level} {self.file}:{self.line}> {self.message}'
 
     def __repr__(self):
         return repr(str(self))
