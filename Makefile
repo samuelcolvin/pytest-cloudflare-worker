@@ -6,6 +6,7 @@ black = black -S -l 120 --target-version py38 pytest_cloudflare_worker tests
 install:
 	pip install -U setuptools pip
 	pip install -r tests/requirements.txt
+	pip install -r tests/requirements-linting.txt
 	pip install -U -e .
 
 .PHONY: format
