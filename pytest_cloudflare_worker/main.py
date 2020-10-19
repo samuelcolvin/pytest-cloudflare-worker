@@ -39,11 +39,12 @@ class DeployPreview:
             if preview_id := namespace.get('preview_id'):
                 bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
         # debug(bindings)
-        metadata = json.dumps({'body_part': 'script', 'binding': bindings})
+        script_name = source_path.stem
+        metadata = json.dumps({'bindings': bindings, 'body_part': script_name}, separators=(',', ':'))
 
         files = {
-            'metadata': ('metadata.json', metadata, 'application/json'),
-            'script': (source_path.name, source_path.read_text()),
+            'metadata': ('metadata.json', metadata.encode(), 'application/json'),
+            script_name: (source_path.name, source_path.read_bytes(), 'application/javascript'),
         }
 
         api_token = self.get_api_token()
@@ -107,7 +108,7 @@ class TestClient(Session):
         self._original_fake_host = fake_host
         self.fake_host = self._original_fake_host
         self.preview_id = preview_id
-        self._root = 'https://0000000000000000.cloudflareworkers.com'
+        self._root = 'https://00000000000000000000000000000000.cloudflareworkers.com'
         self._session_id = uuid.uuid4().hex
         self.headers = {'user-agent': f'pytest-cloudflare-worker/{VERSION}'}
         self.inspect_logs = []
@@ -127,7 +128,7 @@ class TestClient(Session):
     def direct_request(self, method: str, url: str, **kwargs) -> Response:
         return super().request(method, url, **kwargs)
 
-    def request(self, method: str, path: str, *, headers: Dict[str, str] = None, **kwargs: Any) -> Response:
+    def request(self, method: str, path: str, **kwargs: Any) -> Response:
         assert self.preview_id, 'preview_id not set in test client'
         assert path.startswith('/'), f'path "{path}" must be relative'
 
@@ -136,13 +137,11 @@ class TestClient(Session):
                 self._start_inspect()
             self._inspect_ready.wait(2)
 
-        headers = headers or {}
-        assert 'cookie' not in {h.lower() for h in headers.keys()}, '"Cookie" header should not be set'
-
-        headers['Cookie'] = f'__ew_fiddle_preview={self.preview_id}{self._session_id}{1}{self.fake_host}'
+        assert 'cookies' not in kwargs, '"cookies" kwarg not allowed'
+        cookies = {'__ew_fiddle_preview': f'{self.preview_id}{self._session_id}{1}{self.fake_host}'}
 
         logs_before = len(self.inspect_logs)
-        response = super().request(method, self._root + path, headers=headers, **kwargs)
+        response = super().request(method, self._root + path, cookies=cookies, **kwargs)
         if response.status_code >= 500:
             error_logs = []
             for i in range(100):  # pragma: no branch

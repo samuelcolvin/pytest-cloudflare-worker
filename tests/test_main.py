@@ -33,7 +33,7 @@ def test_anon_client(wrangler_dir: Path):
         assert headers['host'] == 'example.com'
         assert headers['user-agent'].startswith('pytest-cloudflare-worker')
         logs = client.inspect_log_wait(1)
-        assert logs == ['LOG worker.js:7> "handling request:", "GET", "/the/path/"']
+        assert logs == [{'level': 'LOG', 'message': '"handling request:", "GET", "/the/path/"'}]
 
 
 @auth_test
@@ -57,7 +57,7 @@ def test_auth_client_vars(wrangler_dir: Path):
         assert obj['method'] == 'GET'
         assert obj['vars'] == {'FOO': 'bar', 'SPAM': 'spam'}
         logs = client.inspect_log_wait(1)
-        assert logs == ['LOG worker.js:7> "handling request:", "GET", "/vars/"']
+        assert logs == [{'level': 'LOG', 'message': '"handling request:", "GET", "/vars/"'}]
 
 
 @auth_test
@@ -79,8 +79,8 @@ def test_auth_client_kv(wrangler_dir: Path):
 
         logs = client.inspect_log_wait(2)
         assert logs == [
-            'LOG worker.js:7> "handling request:", "POST", "/kv/"',
-            'LOG worker.js:25> "settings KV", "foo", "this is a test"',
+            {'level': 'LOG', 'message': '"handling request:", "POST", "/kv/"'},
+            {'level': 'LOG', 'message': '"settings KV", "foo", "this is a test"'},
         ]
 
 
