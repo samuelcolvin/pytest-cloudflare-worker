@@ -58,7 +58,6 @@ jobs:
       run: make lint
 
   deploy:
-    name: Deploy
     needs:
       - test
       - lint
