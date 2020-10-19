@@ -28,11 +28,12 @@ def test_anon_client(wrangler_dir: Path):
                 'params': {},
             },
             'body': '',
+            'TESTING': False,
         }
         assert headers['host'] == 'example.com'
         assert headers['user-agent'].startswith('pytest-cloudflare-worker')
         logs = client.inspect_log_wait(1)
-        assert logs == ['LOG worker.js:5> "handling request:", "GET", "/the/path/"']
+        assert logs == ['LOG worker.js:7> "handling request:", "GET", "/the/path/"']
 
 
 @auth_test
@@ -45,16 +46,18 @@ def test_auth_client_vars(wrangler_dir: Path):
         r = client.get('/vars/')
         assert r.status_code == 200
         obj = r.json()
+        # debug(obj)
         assert obj['url'] == {
             'hostname': 'foobar.com',
             'pathname': '/vars/',
             'params': {},
         }
+        assert obj['TESTING'] is True
         assert obj['headers']['host'] == 'foobar.com'
         assert obj['method'] == 'GET'
         assert obj['vars'] == {'FOO': 'bar', 'SPAM': 'spam'}
         logs = client.inspect_log_wait(1)
-        assert logs == ['LOG worker.js:5> "handling request:", "GET", "/vars/"']
+        assert logs == ['LOG worker.js:7> "handling request:", "GET", "/vars/"']
 
 
 @auth_test
@@ -76,8 +79,8 @@ def test_auth_client_kv(wrangler_dir: Path):
 
         logs = client.inspect_log_wait(2)
         assert logs == [
-            'LOG worker.js:5> "handling request:", "POST", "/kv/"',
-            'LOG worker.js:23> "settings KV", "foo", "this is a test"',
+            'LOG worker.js:7> "handling request:", "POST", "/kv/"',
+            'LOG worker.js:25> "settings KV", "foo", "this is a test"',
         ]
 
 

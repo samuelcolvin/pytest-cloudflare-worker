@@ -1,5 +1,7 @@
 addEventListener('fetch', e => e.respondWith(handle(e.request)))
 
+const TESTING = typeof __TESTING__ !== 'undefined' && __TESTING__ === 'TRUE'
+
 async function handle(request) {
   const url = new URL(request.url)
   console.log('handling request:', request.method, url.pathname)
@@ -12,6 +14,7 @@ async function handle(request) {
       params: as_object(url.searchParams),
     },
     body: await request.text(),
+    TESTING,
   }
   const path = clean_path(url)
 

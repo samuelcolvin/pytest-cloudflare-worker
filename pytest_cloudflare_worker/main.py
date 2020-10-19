@@ -32,12 +32,13 @@ class DeployPreview:
             f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
         )
 
-        bindings: List[Dict[str, str]] = []
+        bindings: List[Dict[str, str]] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
         for k, v in wrangler_data.get('vars', {}).items():
             bindings.append({'name': k, 'type': 'plain_text', 'text': v})
         for namespace in wrangler_data.get('kv_namespaces', []):
             if preview_id := namespace.get('preview_id'):
                 bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+        # debug(bindings)
         metadata = json.dumps({'body_part': source_path.name, 'binding': bindings})
 
         files = {
