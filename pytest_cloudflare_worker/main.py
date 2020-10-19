@@ -292,9 +292,9 @@ class LogMsg:
             return arg['description']
         elif arg_type == 'object' and arg.get('className') == 'Object':
             return {p['name']: cls.parse_arg(p) for p in preview['properties']}
-
-        warnings.warn(f'unknown inspect log argument {arg}')
-        return str(arg)
+        else:  # pragma: no cover
+            warnings.warn(f'unknown inspect log argument {arg}')
+            return str(arg)
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, str):
