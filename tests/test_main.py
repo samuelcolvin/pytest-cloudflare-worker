@@ -3,14 +3,14 @@ from pathlib import Path
 
 import pytest
 
-from pytest_cloudflare_worker.main import DeployPreview, TestClient
+from pytest_cloudflare_worker.main import TestClient, deploy
 
 auth_test = pytest.mark.skipif(not os.getenv('CLOUDFLARE_API_TOKEN'), reason='requires CLOUDFLARE_API_TOKEN env var')
 
 
 def test_anon_client(wrangler_dir: Path):
     with TestClient() as client:
-        preview_id = DeployPreview(wrangler_dir, client).deploy_anon()
+        preview_id = deploy(wrangler_dir, authenticate=False, test_client=client)
         assert len(preview_id) == 32
         client.preview_id = preview_id
 
@@ -28,7 +28,7 @@ def test_anon_client(wrangler_dir: Path):
                 'params': {},
             },
             'body': '',
-            'TESTING': False,
+            'TESTING': True,
         }
         assert headers['host'] == 'example.com'
         assert headers['user-agent'].startswith('pytest-cloudflare-worker')
@@ -38,9 +38,7 @@ def test_anon_client(wrangler_dir: Path):
 
 @auth_test
 def test_auth_client_vars(wrangler_dir: Path):
-    preview_id = DeployPreview(
-        wrangler_dir,
-    ).deploy_auth()
+    preview_id = deploy(wrangler_dir, authenticate=True)
 
     with TestClient(preview_id=preview_id, fake_host='foobar.com') as client:
         r = client.get('/vars/')
@@ -63,7 +61,7 @@ def test_auth_client_vars(wrangler_dir: Path):
 @auth_test
 def test_auth_client_kv(wrangler_dir: Path):
     with TestClient() as client:
-        client.preview_id = DeployPreview(wrangler_dir).deploy_auth()
+        client.preview_id = deploy(wrangler_dir, authenticate=True, test_client=client)
         r = client.post('/kv/', params={'key': 'foo'}, data='this is a test')
         assert r.status_code == 200
         obj = r.json()
@@ -89,7 +87,7 @@ def test_non_api_token(wrangler_dir: Path):
     os.environ['CLOUDFLARE_API_TOKEN_PATH'] = '/does/not/exist.toml'
     try:
         with pytest.raises(FileNotFoundError, match="No such file or directory: '/does/not/exist.toml'"):
-            DeployPreview(wrangler_dir).deploy_auth()
+            deploy(wrangler_dir, authenticate=True)
     finally:
         if env_api_token:
             os.environ['CLOUDFLARE_API_TOKEN'] = env_api_token
@@ -100,7 +98,7 @@ def test_bad_upload(wrangler_dir: Path):
     os.environ['CLOUDFLARE_API_TOKEN'] = 'foobar'
     try:
         with pytest.raises(ValueError, match='unexpected response 400 when deploying to https://api.cloudflare.com'):
-            DeployPreview(wrangler_dir).deploy_auth()
+            deploy(wrangler_dir, authenticate=True)
     finally:
         if env_api_token:
             os.environ['CLOUDFLARE_API_TOKEN'] = env_api_token

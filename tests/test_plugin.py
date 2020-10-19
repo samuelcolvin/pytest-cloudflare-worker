@@ -11,7 +11,7 @@ def test_client_get(client: TestClient):
     assert obj['headers']['host'] == 'example.com'
     assert r.headers['x-foo'] == 'bar'
     log = client.inspect_log_wait(1)
-    assert log == ['LOG worker.js:7> "handling request:", "GET", "/"']
+    assert log == [{'level': 'LOG', 'message': '"handling request:", "GET", "/"'}]
 
 
 def test_client_post(client: TestClient):
@@ -30,11 +30,11 @@ def test_client_post(client: TestClient):
             'params': {'x': '123'},
         },
         'body': '{"foo": "bar"}',
-        'TESTING': False,  # anon client, vars not working
+        'TESTING': True,
     }
     assert r.headers['x-foo'] == 'bar'
     log = client.inspect_log_wait(1)
-    assert log == ['LOG worker.js:7> "handling request:", "PUT", "/foo/bar"']
+    assert log == [{'level': 'LOG', 'message': '"handling request:", "PUT", "/foo/bar"'}]
 
 
 def test_client_request(client: TestClient):
@@ -44,18 +44,18 @@ def test_client_request(client: TestClient):
     log = client.inspect_log_wait(3)
     # debug(log)
     assert log == [
-        'LOG worker.js:7> "handling request:", "GET", "/1"',
-        'LOG worker.js:7> "handling request:", "GET", "/2"',
-        'LOG worker.js:7> "handling request:", "GET", "/3"',
+        {'level': 'LOG', 'message': '"handling request:", "GET", "/1"'},
+        {'level': 'LOG', 'message': '"handling request:", "GET", "/2"'},
+        {'level': 'LOG', 'message': '"handling request:", "GET", "/3"'},
     ]
 
 
 def test_worker_error(client: TestClient):
     """
-    Use the fact that anon clients don't have access to vars to cause a 500 error
+    Use the fact that anon clients don't have access to KV worker to cause a 500 error
     """
-    with pytest.raises(WorkerError, match='worker.js:22> ReferenceError: FOO is not defined'):
-        client.get('/vars/')
+    with pytest.raises(WorkerError, match='worker.js:28> ReferenceError: THINGS is not defined'):
+        client.get('/kv/')
 
 
 def test_client_console(client: TestClient):

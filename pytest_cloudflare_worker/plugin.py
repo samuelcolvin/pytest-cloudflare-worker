@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from .main import DeployPreview, TestClient
+from .main import TestClient, deploy
 
 __version__ = ('pytest_addoption',)
 
@@ -28,11 +28,8 @@ def _fix_session_client(request):
     wrangler_dir = Path(request.config.getoption('--cf-wrangler-dir')).resolve()
     anon_client: bool = request.config.getoption('--cf-anon-client')
     client = TestClient()
-    deployer = DeployPreview(wrangler_dir, client)
-    if anon_client:
-        client.preview_id = deployer.deploy_anon()
-    else:
-        client.preview_id = deployer.deploy_auth()
+    client.preview_id = deploy(wrangler_dir, authenticate=not anon_client, test_client=client)
+
     yield client
 
     client.close()

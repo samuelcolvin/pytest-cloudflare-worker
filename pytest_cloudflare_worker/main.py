@@ -16,82 +16,81 @@ from requests import Response, Session
 
 from .version import VERSION
 
-__all__ = 'DeployPreview', 'TestClient', 'WorkerError'
+__all__ = 'deploy', 'TestClient', 'WorkerError'
 
 
-class DeployPreview:
-    def __init__(self, wrangler_dir: Path, test_client: Optional['TestClient'] = None) -> None:
-        self._wrangler_dir = wrangler_dir
-        self._test_client = test_client
+def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['TestClient'] = None) -> str:
+    source_path, wrangler_data = build_source(wrangler_dir)
 
-    def deploy_auth(self) -> str:
-        source_path, wrangler_data = self._build_source()
-
+    if authenticate:
         url = (
             f'https://api.cloudflare.com/client/v4/'
             f'accounts/{wrangler_data["account_id"]}/workers/scripts/{wrangler_data["name"]}/preview'
         )
+        api_token = get_api_token()
+        headers = {'Authorization': f'Bearer {api_token}'}
+    else:
+        url = 'https://cloudflareworkers.com/script'
+        headers = None
 
-        bindings: List[Dict[str, str]] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
-        for k, v in wrangler_data.get('vars', {}).items():
-            bindings.append({'name': k, 'type': 'plain_text', 'text': v})
+    bindings: List[Dict[str, str]] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
+    for k, v in wrangler_data.get('vars', {}).items():
+        bindings.append({'name': k, 'type': 'plain_text', 'text': v})
+
+    if authenticate:
         for namespace in wrangler_data.get('kv_namespaces', []):
             if preview_id := namespace.get('preview_id'):
                 bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
-        # debug(bindings)
-        script_name = source_path.stem
-        metadata = json.dumps({'bindings': bindings, 'body_part': script_name}, separators=(',', ':'))
 
-        files = {
-            'metadata': ('metadata.json', metadata.encode(), 'application/json'),
-            script_name: (source_path.name, source_path.read_bytes(), 'application/javascript'),
-        }
+    # debug(bindings)
+    script_name = source_path.stem
+    metadata = json.dumps({'bindings': bindings, 'body_part': script_name}, separators=(',', ':'))
 
-        api_token = self.get_api_token()
-        r = self._upload(url, files=files, headers={'Authorization': f'Bearer {api_token}'})
-        return r['result']['preview_id']
+    files = {
+        'metadata': ('metadata.json', metadata.encode(), 'application/json'),
+        script_name: (source_path.name, source_path.read_bytes(), 'application/javascript'),
+    }
 
-    def deploy_anon(self) -> str:
-        source_path, wrangler_data = self._build_source()
+    if isinstance(test_client, TestClient):
+        r = test_client.direct_request('POST', url, files=files, headers=headers)
+    else:
+        r = requests.post(url, files=files, headers=headers)
 
-        r = self._upload('https://cloudflareworkers.com/script', data=source_path.read_bytes())
-        return r['id']
+    # debug(r.request.body)
+    if r.status_code not in {200, 201}:
+        raise ValueError(f'unexpected response {r.status_code} when deploying to {url}:\n{r.text}')
+    obj = r.json()
 
-    def _build_source(self) -> Tuple[Path, Dict[str, Any]]:
-        assert self._wrangler_dir.is_dir()
-        wrangler_path = self._wrangler_dir / 'wrangler.toml'
-        assert wrangler_path.is_file()
-        wrangler_data = toml.loads(wrangler_path.read_text())
-        if wrangler_data['type'] == 'javascript':
-            source_path = self._wrangler_dir / 'index.js'
-        else:
-            subprocess.run(('wrangler', 'build'), check=True)
-            source_path = self._wrangler_dir / 'dist' / 'index.js'
-        assert source_path.is_file(), f'source path "{source_path}" not found'
-        return source_path, wrangler_data
+    if authenticate:
+        return obj['result']['preview_id']
+    else:
+        return obj['id']
 
-    @classmethod
-    def get_api_token(cls) -> str:
-        if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
-            return api_token
 
-        if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
-            api_token_path = Path(path).expanduser()
-        else:
-            api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
+def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
+    assert wrangler_dir.is_dir()
+    wrangler_path = wrangler_dir / 'wrangler.toml'
+    assert wrangler_path.is_file()
+    wrangler_data = toml.loads(wrangler_path.read_text())
+    if wrangler_data['type'] == 'javascript':
+        source_path = wrangler_dir / 'index.js'
+    else:
+        subprocess.run(('wrangler', 'build'), check=True)
+        source_path = wrangler_dir / 'dist' / 'index.js'
+    assert source_path.is_file(), f'source path "{source_path}" not found'
+    return source_path, wrangler_data
 
-        return toml.loads(api_token_path.read_text())['api_token']
 
-    def _upload(self, url: str, **kwargs) -> Dict[str, Any]:
-        if isinstance(self._test_client, TestClient):
-            r = self._test_client.direct_request('POST', url, **kwargs)
-        else:
-            r = requests.post(url, **kwargs)
+def get_api_token() -> str:
+    if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
+        return api_token
 
-        # debug(r.request.body)
-        if r.status_code not in {200, 201}:
-            raise ValueError(f'unexpected response {r.status_code} when deploying to {url}:\n{r.text}')
-        return r.json()
+    if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
+        api_token_path = Path(path).expanduser()
+    else:
+        api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
+
+    return toml.loads(api_token_path.read_text())['api_token']
 
 
 class WorkerError(Exception):
