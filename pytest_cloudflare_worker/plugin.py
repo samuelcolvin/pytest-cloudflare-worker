@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from .main import DeployPreview, TestClient
+from .main import TestClient, deploy
 
 __version__ = ('pytest_addoption',)
 
@@ -10,12 +10,12 @@ __version__ = ('pytest_addoption',)
 def pytest_addoption(parser):
     parser.addoption('--cf-wrangler-dir', action='store', default='.', help='directory in which to find wrangler.toml')
     parser.addoption(
-        '--cf-anon-client',
+        '--cf-auth-client',
         action='store_true',
         default=False,
         help=(
-            "whether the anonymous cloudflare worker preview endpoint, if set "  # noqa: Q000
-            "env variables, KV worker, secrets etc. won't work"
+            'whether to use the authenticated cloudflare worker preview endpoint, the KV worker database '
+            'will only work with this set'
         ),
     )
 
@@ -26,13 +26,10 @@ def _fix_session_client(request):
     Create a test client and deploy the worker preview to cloudflare.
     """
     wrangler_dir = Path(request.config.getoption('--cf-wrangler-dir')).resolve()
-    anon_client: bool = request.config.getoption('--cf-anon-client')
+    auth_client: bool = request.config.getoption('--cf-auth-client')
     client = TestClient()
-    deployer = DeployPreview(wrangler_dir, client)
-    if anon_client:
-        client.preview_id = deployer.deploy_anon()
-    else:
-        client.preview_id = deployer.deploy_auth()
+    client.preview_id = deploy(wrangler_dir, authenticate=auth_client, test_client=client)
+
     yield client
 
     client.close()
