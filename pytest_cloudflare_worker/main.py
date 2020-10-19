@@ -47,7 +47,7 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
     metadata = json.dumps({'bindings': bindings, 'body_part': script_name}, separators=(',', ':'))
 
     files = {
-        'metadata': ('metadata.json', metadata.encode(), 'application/json'),
+        'metadata': ('metadata.json', metadata, 'application/json'),
         script_name: (source_path.name, source_path.read_bytes(), 'application/javascript'),
     }
 
@@ -68,9 +68,7 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
 
 
 def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
-    assert wrangler_dir.is_dir()
     wrangler_path = wrangler_dir / 'wrangler.toml'
-    assert wrangler_path.is_file()
     wrangler_data = toml.loads(wrangler_path.read_text())
     if wrangler_data['type'] == 'javascript':
         source_path = wrangler_dir / 'index.js'
