@@ -39,11 +39,11 @@ class DeployPreview:
             if preview_id := namespace.get('preview_id'):
                 bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
         # debug(bindings)
-        metadata = json.dumps({'body_part': source_path.name, 'binding': bindings})
+        metadata = json.dumps({'body_part': 'script', 'binding': bindings})
 
         files = {
             'metadata': ('metadata.json', metadata, 'application/json'),
-            source_path.name: (source_path.name, source_path.read_text(), 'text/plain'),
+            'script': (source_path.name, source_path.read_text()),
         }
 
         api_token = self.get_api_token()
@@ -79,7 +79,6 @@ class DeployPreview:
         else:
             api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
 
-        # assert api_token_path.is_file(), f'api token file "{api_token_path}" does not exist'
         return toml.loads(api_token_path.read_text())['api_token']
 
     def _upload(self, url: str, **kwargs) -> Dict[str, Any]:
@@ -88,6 +87,7 @@ class DeployPreview:
         else:
             r = requests.post(url, **kwargs)
 
+        # debug(r.request.body)
         if r.status_code not in {200, 201}:
             raise ValueError(f'unexpected response {r.status_code} when deploying to {url}:\n{r.text}')
         return r.json()
