@@ -181,7 +181,10 @@ class TestClient(Session):
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
-                raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
+                if count is None:
+                    return self.inspect_logs
+                else:
+                    raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
             self._wait_for_log()
 
     def _wait_for_log(self) -> None:
