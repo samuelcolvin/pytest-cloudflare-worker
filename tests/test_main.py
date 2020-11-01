@@ -10,9 +10,14 @@ auth_test = pytest.mark.skipif(not os.getenv('CLOUDFLARE_API_TOKEN'), reason='re
 
 def test_anon_client(wrangler_dir: Path):
     with TestClient() as client:
-        preview_id = deploy(wrangler_dir, authenticate=False, test_client=client)
+        preview_id, bindings = deploy(wrangler_dir, authenticate=False, test_client=client)
         assert len(preview_id) == 32
         client.preview_id = preview_id
+        assert bindings == [
+            {'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'},
+            {'name': 'FOO', 'type': 'plain_text', 'text': 'bar'},
+            {'name': 'SPAM', 'type': 'plain_text', 'text': 'spam'},
+        ]
 
         r = client.get('/the/path/')
         assert r.status_code == 200
@@ -38,7 +43,13 @@ def test_anon_client(wrangler_dir: Path):
 
 @auth_test
 def test_auth_client_vars(wrangler_dir: Path):
-    preview_id = deploy(wrangler_dir, authenticate=True)
+    preview_id, bindings = deploy(wrangler_dir, authenticate=True)
+    assert bindings == [
+        {'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'},
+        {'name': 'FOO', 'type': 'plain_text', 'text': 'bar'},
+        {'name': 'SPAM', 'type': 'plain_text', 'text': 'spam'},
+        {'name': 'THINGS', 'type': 'kv_namespace', 'namespace_id': '06b957fd6edd4b588e944f85192ff28b'},
+    ]
 
     with TestClient(preview_id=preview_id, fake_host='foobar.com') as client:
         r = client.get('/vars/')
