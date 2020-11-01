@@ -19,11 +19,11 @@ from .version import VERSION
 __all__ = 'deploy', 'TestClient', 'WorkerError'
 
 
-Binding = TypedDict(
-    'Binding',
-    {'name': str, 'type': Literal['plain_text', 'kv_namespace'], 'text': str, 'namespace_id': 'str'},
-    total=False,
-)
+class Binding(TypedDict, total=False):
+    name: str
+    type: Literal['plain_text', 'kv_namespace']
+    text: str
+    namespace_id: str
 
 
 def deploy(
