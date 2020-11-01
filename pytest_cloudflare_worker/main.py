@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from threading import Event, Thread
 from time import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 import requests
 import toml
@@ -19,7 +19,16 @@ from .version import VERSION
 __all__ = 'deploy', 'TestClient', 'WorkerError'
 
 
-def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['TestClient'] = None) -> str:
+Binding = TypedDict(
+    'Binding',
+    {'name': str, 'type': Literal['plain_text', 'kv_namespace'], 'text': str, 'namespace_id': 'str'},
+    total=False,
+)
+
+
+def deploy(
+    wrangler_dir: Path, *, authenticate: bool, test_client: Optional['TestClient'] = None
+) -> Tuple[str, List[Binding]]:
     source_path, wrangler_data = build_source(wrangler_dir)
 
     if authenticate:
@@ -33,14 +42,7 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
         url = 'https://cloudflareworkers.com/script'
         headers = None
 
-    bindings: List[Dict[str, str]] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
-    for k, v in wrangler_data.get('vars', {}).items():
-        bindings.append({'name': k, 'type': 'plain_text', 'text': v})
-
-    if authenticate:
-        for namespace in wrangler_data.get('kv_namespaces', []):
-            if preview_id := namespace.get('preview_id'):
-                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+    bindings = build_bindings(wrangler_data, authenticate)
 
     # debug(bindings)
     script_name = source_path.stem
@@ -62,9 +64,29 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
     obj = r.json()
 
     if authenticate:
-        return obj['result']['preview_id']
+        return obj['result']['preview_id'], bindings
     else:
-        return obj['id']
+        return obj['id'], bindings
+
+
+def build_bindings(wrangler_data: Dict[str, Any], authenticate: bool) -> List[Binding]:
+    bindings: List[Binding] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
+
+    vars = wrangler_data.get('vars')
+    if (preview := wrangler_data.get('preview')) and 'vars' in preview:
+        # vars are not inherited by environments, if preview exists and vars is in it, it completely overrides vars
+        # in the root namespace
+        vars = preview['vars']
+
+    if vars:
+        bindings += [{'name': k, 'type': 'plain_text', 'text': v} for k, v in vars.items()]
+
+    if authenticate:
+        for namespace in wrangler_data.get('kv_namespaces', []):
+            if preview_id := namespace.get('preview_id'):
+                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+
+    return bindings
 
 
 def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
