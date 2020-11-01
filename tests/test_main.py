@@ -72,9 +72,9 @@ def test_auth_client_vars(wrangler_dir: Path):
 @auth_test
 def test_auth_client_kv(wrangler_dir: Path):
     with TestClient() as client:
-        client.preview_id = deploy(wrangler_dir, authenticate=True, test_client=client)
+        client.preview_id, _ = deploy(wrangler_dir, authenticate=True, test_client=client)
         r = client.post('/kv/', params={'key': 'foo'}, data='this is a test')
-        assert r.status_code == 200
+        assert r.status_code == 200, r.text
         obj = r.json()
 
         assert obj['method'] == 'POST'
