@@ -122,11 +122,14 @@ class WorkerError(Exception):
 class TestClient(Session):
     __test__ = False
 
-    def __init__(self, *, preview_id: Optional[str] = None, fake_host: str = 'example.com'):
+    def __init__(
+        self, *, preview_id: Optional[str] = None, bindings: List[Binding] = None, fake_host: str = 'example.com'
+    ):
         super().__init__()
         self._original_fake_host = fake_host
         self.fake_host = self._original_fake_host
         self.preview_id = preview_id
+        self.bindings: List[Binding] = bindings or []
         self._root = 'https://00000000000000000000000000000000.cloudflareworkers.com'
         self._session_id = uuid.uuid4().hex
         self.headers = {'user-agent': f'pytest-cloudflare-worker/{VERSION}'}
