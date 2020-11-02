@@ -105,11 +105,8 @@ def get_api_token() -> str:
     if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
         return api_token
 
-    if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
-        api_token_path = Path(path).expanduser()
-    else:
-        api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
-
+    api_token_path_str = os.getenv('CLOUDFLARE_API_TOKEN_PATH', '~/.wrangler/config/default.toml')
+    api_token_path = Path(api_token_path_str).expanduser()
     return toml.loads(api_token_path.read_text())['api_token']
 
 

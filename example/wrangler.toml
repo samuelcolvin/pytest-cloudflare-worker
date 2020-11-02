@@ -10,5 +10,8 @@ kv_namespaces = [
 ]
 
 [vars]
+BAT = 'different'
+
+[preview.vars]
 FOO = 'bar'
 SPAM = 'spam'
