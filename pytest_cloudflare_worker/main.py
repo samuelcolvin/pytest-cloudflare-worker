@@ -96,7 +96,7 @@ def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
         source_path = wrangler_dir / 'index.js'
     else:
         subprocess.run(('wrangler', 'build'), check=True)
-        source_path = wrangler_dir / 'dist' / 'index.js'
+        source_path = wrangler_dir / 'dist' / 'worker.js'
     assert source_path.is_file(), f'source path "{source_path}" not found'
     return source_path, wrangler_data
 
@@ -278,7 +278,7 @@ class LogMsg:
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
             details = params['exceptionDetails']
-            self.message = details['exception']['preview']['description']
+            self.message = details['exception']['description']
             self.file = details['url']
             self.line = details['lineNumber'] + 1
 
@@ -309,14 +309,10 @@ class LogMsg:
             # no good python equivalent
             return '<undefined>'
 
-        sub_type = arg.get('subtype')
-        preview = arg.get('preview')
-        if (arg_type, sub_type) == ('object', 'array'):
-            return [cls.parse_arg(item) for item in preview['properties']]
-        elif (arg_type, sub_type) == ('object', 'date'):
-            return arg['description']
-        elif arg_type == 'object' and arg.get('className') == 'Object':
-            return {p['name']: cls.parse_arg(p) for p in preview['properties']}
+        # TODO in theory to get more information about objects we need to do
+        # send a "Runtime.getProperties" message
+        if arg_type == 'object' and (description := arg.get('description')):
+            return description
         else:  # pragma: no cover
             warnings.warn(f'unknown inspect log argument {arg}')
             return str(arg)
