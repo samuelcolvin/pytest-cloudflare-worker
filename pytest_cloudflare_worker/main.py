@@ -260,6 +260,14 @@ ignored_methods = {
     'Debugger.scriptParsed',
     'Profiler.enable',
     'Network.enable',
+    'Network.dataReceived',
+    'Network.loadingFinished',
+}
+known_methods = {
+    'Runtime.consoleAPICalled',
+    'Runtime.exceptionThrown',
+    'Network.requestWillBeSent',
+    'Network.responseReceived',
 }
 
 
@@ -281,14 +289,28 @@ class LogMsg:
             self.message = details['exception']['description']
             self.file = details['url']
             self.line = details['lineNumber'] + 1
+        elif method == 'Network.requestWillBeSent':
+            self.level = 'INFO'
+            request = params['request']
+            self.message = 'request {method} {url}'.format(**request)
+            self.headers = request['headers']
+            self.file = '<unknown>'
+            self.line = params['initiator']['lineNumber'] + 1
+        else:
+            assert method == 'Network.responseReceived', method
+            self.level = 'INFO'
+            response = params['response']
+            self.message = 'response {status}'.format(**response)
+            self.headers = response['headers']
+            self.file = '<unknown>'
+            self.line = 0
 
     @classmethod
     def from_raw(cls, data: Dict[str, Any]) -> Optional['LogMsg']:
         method = data.get('method')
         if not method or method in ignored_methods:
             return
-
-        if method in {'Runtime.consoleAPICalled', 'Runtime.exceptionThrown'}:
+        elif method in known_methods:
             return cls(method, data)
         else:
             raise RuntimeError(f'unknown message from inspect websocket, type {method}\n{data}')
