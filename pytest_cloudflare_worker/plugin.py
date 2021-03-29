@@ -28,7 +28,9 @@ def _fix_session_client(request):
     wrangler_dir = Path(request.config.getoption('--cf-wrangler-dir')).resolve()
     auth_client: bool = request.config.getoption('--cf-auth-client')
     client = TestClient()
-    client.preview_id = deploy(wrangler_dir, authenticate=auth_client, test_client=client)
+    preview_id, bindings = deploy(wrangler_dir, authenticate=auth_client, test_client=client)
+    client.preview_id = preview_id
+    client.bindings = bindings
 
     yield client
 

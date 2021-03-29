@@ -7,7 +7,7 @@ import warnings
 from pathlib import Path
 from threading import Event, Thread
 from time import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 import requests
 import toml
@@ -19,7 +19,16 @@ from .version import VERSION
 __all__ = 'deploy', 'TestClient', 'WorkerError'
 
 
-def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['TestClient'] = None) -> str:
+class Binding(TypedDict, total=False):
+    name: str
+    type: Literal['plain_text', 'kv_namespace']
+    text: str
+    namespace_id: str
+
+
+def deploy(
+    wrangler_dir: Path, *, authenticate: bool, test_client: Optional['TestClient'] = None
+) -> Tuple[str, List[Binding]]:
     source_path, wrangler_data = build_source(wrangler_dir)
 
     if authenticate:
@@ -33,14 +42,7 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
         url = 'https://cloudflareworkers.com/script'
         headers = None
 
-    bindings: List[Dict[str, str]] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
-    for k, v in wrangler_data.get('vars', {}).items():
-        bindings.append({'name': k, 'type': 'plain_text', 'text': v})
-
-    if authenticate:
-        for namespace in wrangler_data.get('kv_namespaces', []):
-            if preview_id := namespace.get('preview_id'):
-                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+    bindings = build_bindings(wrangler_data, authenticate)
 
     # debug(bindings)
     script_name = source_path.stem
@@ -62,9 +64,29 @@ def deploy(wrangler_dir: Path, *, authenticate: bool, test_client: Optional['Tes
     obj = r.json()
 
     if authenticate:
-        return obj['result']['preview_id']
+        return obj['result']['preview_id'], bindings
     else:
-        return obj['id']
+        return obj['id'], bindings
+
+
+def build_bindings(wrangler_data: Dict[str, Any], authenticate: bool) -> List[Binding]:
+    bindings: List[Binding] = [{'name': '__TESTING__', 'type': 'plain_text', 'text': 'TRUE'}]
+
+    vars = wrangler_data.get('vars')
+    if (preview := wrangler_data.get('preview')) and 'vars' in preview:
+        # vars are not inherited by environments, if preview exists and vars is in it, it completely overrides vars
+        # in the root namespace
+        vars = preview['vars']
+
+    if vars:
+        bindings += [{'name': k, 'type': 'plain_text', 'text': v} for k, v in vars.items()]
+
+    if authenticate:
+        for namespace in wrangler_data.get('kv_namespaces', []):
+            if preview_id := namespace.get('preview_id'):
+                bindings.append({'name': namespace['binding'], 'type': 'kv_namespace', 'namespace_id': preview_id})
+
+    return bindings
 
 
 def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
@@ -74,7 +96,7 @@ def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
         source_path = wrangler_dir / 'index.js'
     else:
         subprocess.run(('wrangler', 'build'), check=True)
-        source_path = wrangler_dir / 'dist' / 'index.js'
+        source_path = wrangler_dir / 'dist' / 'worker.js'
     assert source_path.is_file(), f'source path "{source_path}" not found'
     return source_path, wrangler_data
 
@@ -83,11 +105,8 @@ def get_api_token() -> str:
     if api_token := os.getenv('CLOUDFLARE_API_TOKEN'):
         return api_token
 
-    if path := os.getenv('CLOUDFLARE_API_TOKEN_PATH'):
-        api_token_path = Path(path).expanduser()
-    else:
-        api_token_path = Path.home() / '.wrangler' / 'config' / 'default.toml'
-
+    api_token_path_str = os.getenv('CLOUDFLARE_API_TOKEN_PATH', '~/.wrangler/config/default.toml')
+    api_token_path = Path(api_token_path_str).expanduser()
     return toml.loads(api_token_path.read_text())['api_token']
 
 
@@ -100,11 +119,14 @@ class WorkerError(Exception):
 class TestClient(Session):
     __test__ = False
 
-    def __init__(self, *, preview_id: Optional[str] = None, fake_host: str = 'example.com'):
+    def __init__(
+        self, *, preview_id: Optional[str] = None, bindings: List[Binding] = None, fake_host: str = 'example.com'
+    ):
         super().__init__()
         self._original_fake_host = fake_host
         self.fake_host = self._original_fake_host
         self.preview_id = preview_id
+        self.bindings: List[Binding] = bindings or []
         self._root = 'https://00000000000000000000000000000000.cloudflareworkers.com'
         self._session_id = uuid.uuid4().hex
         self.headers = {'user-agent': f'pytest-cloudflare-worker/{VERSION}'}
@@ -156,7 +178,10 @@ class TestClient(Session):
             if count is not None and len(self.inspect_logs) >= count:
                 return self.inspect_logs
             elif time() - start > wait_time:
-                raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
+                if count is None:
+                    return self.inspect_logs
+                else:
+                    raise TimeoutError(f'{len(self.inspect_logs)} logs received, expected {count}')
             self._wait_for_log()
 
     def _wait_for_log(self) -> None:
@@ -253,7 +278,7 @@ class LogMsg:
         elif method == 'Runtime.exceptionThrown':
             self.level = 'ERROR'
             details = params['exceptionDetails']
-            self.message = details['exception']['preview']['description']
+            self.message = details['exception']['description']
             self.file = details['url']
             self.line = details['lineNumber'] + 1
 
@@ -284,14 +309,10 @@ class LogMsg:
             # no good python equivalent
             return '<undefined>'
 
-        sub_type = arg.get('subtype')
-        preview = arg.get('preview')
-        if (arg_type, sub_type) == ('object', 'array'):
-            return [cls.parse_arg(item) for item in preview['properties']]
-        elif (arg_type, sub_type) == ('object', 'date'):
-            return arg['description']
-        elif arg_type == 'object' and arg.get('className') == 'Object':
-            return {p['name']: cls.parse_arg(p) for p in preview['properties']}
+        # TODO in theory to get more information about objects we need to do
+        # send a "Runtime.getProperties" message
+        if arg_type == 'object' and (description := arg.get('description')):
+            return description
         else:  # pragma: no cover
             warnings.warn(f'unknown inspect log argument {arg}')
             return str(arg)
