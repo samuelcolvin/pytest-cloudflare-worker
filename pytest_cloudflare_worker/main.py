@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -147,8 +148,10 @@ class TestClient(Session):
 
     def request(self, method: str, path: str, **kwargs: Any) -> Response:
         assert self.preview_id, 'preview_id not set in test client'
-        if not path.startswith(('/', self.fake_host)):  # pragma: no cover
-            raise ValueError(f'path "{path}" must be relative or start with "{self.fake_host}"')
+        host_regex = '^https?://' + re.escape(self.fake_host)
+        path = re.sub(host_regex, '', path)
+        if not path.startswith('/'):
+            raise ValueError(f'path "{path}" must be relative or match "{host_regex}"')
 
         if self.inspect_enabled:
             if self._inspect_thread is None:

@@ -40,7 +40,7 @@ def test_client_post(client: TestClient):
 def test_client_request(client: TestClient):
     assert client.get('/1').status_code == 200
     assert client.get('/2').status_code == 200
-    assert client.get('/3').status_code == 200
+    assert client.get('https://example.com/3').status_code == 200
     log = client.inspect_log_wait(3)
     # debug(log)
     assert log == [
@@ -48,6 +48,11 @@ def test_client_request(client: TestClient):
         {'level': 'LOG', 'message': '"handling request:", "GET", "/2"'},
         {'level': 'LOG', 'message': '"handling request:", "GET", "/3"'},
     ]
+
+
+def test_invalid_url(client: TestClient):
+    with pytest.raises(ValueError, match=r'path "https://wrong\.com" must be relative or match "\^https\?://'):
+        client.get('https://wrong.com')
 
 
 def test_worker_error(client: TestClient):
