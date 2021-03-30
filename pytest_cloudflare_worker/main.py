@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -93,7 +94,7 @@ def build_source(wrangler_dir: Path) -> Tuple[Path, Dict[str, Any]]:
     if wrangler_data['type'] == 'javascript':
         source_path = wrangler_dir / 'index.js'
     else:
-        subprocess.run(('wrangler', 'build'), check=True)
+        subprocess.run(('wrangler', 'build'), check=True, cwd=str(wrangler_dir))
         source_path = wrangler_dir / 'dist' / 'worker.js'
     assert source_path.is_file(), f'source path "{source_path}" not found'
     return source_path, wrangler_data
@@ -147,7 +148,8 @@ class TestClient(Session):
 
     def request(self, method: str, path: str, **kwargs: Any) -> Response:
         assert self.preview_id, 'preview_id not set in test client'
-        assert path.startswith('/'), f'path "{path}" must be relative'
+        if not path.startswith(('/', self.fake_host)):  # pragma: no cover
+            raise ValueError(f'path "{path}" must be relative or start with "{self.fake_host}"')
 
         if self.inspect_enabled:
             if self._inspect_thread is None:
